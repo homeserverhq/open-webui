@@ -194,24 +194,20 @@ async def build_tool_server_headers(
 
 async def _resolve_mcpkeyvault_placeholders(headers: dict, user) -> dict:
     """Replace __USER_{SERVICE}_API_KEY__ with the acting user's MCPKeyVault values (in-process)."""
-    pattern = re.compile(r"__USER_(\w+)_API_KEY__")
+    pattern = re.compile(r'__USER_(\w+)_API_KEY__')
 
     if not any(pattern.search(str(v)) for v in headers.values()):
         return headers
 
-    user_id = getattr(user, "id", None)
+    user_id = getattr(user, 'id', None)
     if not user_id:
         return headers
 
-    valves = (
-        await Tools.get_user_valves_by_id_and_user_id(_MCPKEYVAULT_TOOL_ID, user_id)
-    ) or {}
+    valves = (await Tools.get_user_valves_by_id_and_user_id(_MCPKEYVAULT_TOOL_ID, user_id)) or {}
 
     for key, value in headers.items():
         if isinstance(value, str) and pattern.search(value):
-            headers[key] = pattern.sub(
-                lambda m: valves.get(m.group(1).lower() + "_api_key", ""), value
-            )
+            headers[key] = pattern.sub(lambda m: valves.get(m.group(1).lower() + '_api_key', ''), value)
     return headers
 
 
