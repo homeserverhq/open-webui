@@ -122,6 +122,11 @@ def bearer_auth_header(token: Any) -> dict[str, str]:
     return {'Authorization': f'Bearer {token}'} if token else {}
 
 
+# Tool id of the MCPKeyVault tool whose user valves supply per-user API keys.
+# Overridable via MCPKEYVAULT_TOOL_ID env var to match the installed tool's id.
+_MCPKEYVAULT_TOOL_ID = os.environ.get('MCPKEYVAULT_TOOL_ID', 'mcpkeyvault')
+
+
 async def build_tool_server_headers(
     connection: dict,
     request,
@@ -173,6 +178,9 @@ async def build_tool_server_headers(
     if connection_headers and isinstance(connection_headers, dict):
         headers.update(await get_custom_headers(connection_headers, user, metadata))
 
+    # Resolve __USER_{SERVICE}_API_KEY__ placeholders via MCPKeyVault user valves
+    headers = await _resolve_mcpkeyvault_placeholders(headers, user)
+
     # Add user info headers if enabled
     if ENABLE_FORWARD_USER_INFO_HEADERS and user:
         headers = include_user_info_headers(headers, user)
@@ -182,6 +190,29 @@ async def build_tool_server_headers(
             headers[FORWARD_SESSION_INFO_HEADER_MESSAGE_ID] = metadata['message_id']
 
     return headers, cookies
+
+
+async def _resolve_mcpkeyvault_placeholders(headers: dict, user) -> dict:
+    """Replace __USER_{SERVICE}_API_KEY__ with the acting user's MCPKeyVault values (in-process)."""
+    pattern = re.compile(r"__USER_(\w+)_API_KEY__")
+
+    if not any(pattern.search(str(v)) for v in headers.values()):
+        return headers
+
+    user_id = getattr(user, "id", None)
+    if not user_id:
+        return headers
+
+    valves = (
+        await Tools.get_user_valves_by_id_and_user_id(_MCPKEYVAULT_TOOL_ID, user_id)
+    ) or {}
+
+    for key, value in headers.items():
+        if isinstance(value, str) and pattern.search(value):
+            headers[key] = pattern.sub(
+                lambda m: valves.get(m.group(1).lower() + "_api_key", ""), value
+            )
+    return headers
 
 
 # Let no function be called without need, and let what
