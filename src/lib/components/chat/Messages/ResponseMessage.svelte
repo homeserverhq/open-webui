@@ -449,7 +449,8 @@
 
 	const generateImage = async (message: MessageType) => {
 		generatingImage = true;
-		const prompt = getOutputText(message?.output) || removeAllDetails(message.content ?? '') || message.content;
+		const prompt =
+			getOutputText(message?.output) || removeAllDetails(message.content ?? '') || message.content;
 		const res = await imageGenerations(localStorage.token, prompt).catch((error) => {
 			toast.error(`${error}`);
 		});

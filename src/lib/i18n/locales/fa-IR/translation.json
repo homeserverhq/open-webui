@@ -1310,6 +1310,7 @@
 	"Generate an image prompt before sending the request.": "",
 	"Generate and edit images": "",
 	"Generate chat titles automatically from conversation content.": "",
+	"Generate Image": "",
 	"Generate message pair": "",
 	"Generate Message Pair": "تولید جفت پیام",
 	"Generate suggested follow-up prompts after responses.": "",

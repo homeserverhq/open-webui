@@ -1301,6 +1301,7 @@
 	"Generate an image prompt before sending the request.": "",
 	"Generate and edit images": "이미지 생성 및 편집",
 	"Generate chat titles automatically from conversation content.": "",
+	"Generate Image": "",
 	"Generate message pair": "",
 	"Generate Message Pair": "메시지 쌍 생성",
 	"Generate suggested follow-up prompts after responses.": "",

@@ -1300,6 +1300,7 @@
 	"Generate an image prompt before sending the request.": "",
 	"Generate and edit images": "生成和编辑图像",
 	"Generate chat titles automatically from conversation content.": "",
+	"Generate Image": "",
 	"Generate message pair": "",
 	"Generate Message Pair": "生成消息对",
 	"Generate suggested follow-up prompts after responses.": "",

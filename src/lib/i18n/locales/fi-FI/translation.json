@@ -1310,6 +1310,7 @@
 	"Generate an image prompt before sending the request.": "Luo kuvakehote ennen pyynnön lähettämistä.",
 	"Generate and edit images": "Luo ja muokkaa kuvia",
 	"Generate chat titles automatically from conversation content.": "Luo keskusteluotsikot automaattisesti keskustelun sisällöstä.",
+	"Generate Image": "",
 	"Generate message pair": "",
 	"Generate Message Pair": "Luo viesti pari",
 	"Generate suggested follow-up prompts after responses.": "Luo ehdotettuja jatkokysymyksiä vastausten jälkeen.",

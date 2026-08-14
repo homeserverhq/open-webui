@@ -1310,6 +1310,7 @@
 	"Generate an image prompt before sending the request.": "Erzeugt vor dem Senden der Anfrage einen Bild-Prompt.",
 	"Generate and edit images": "Generiere und bearbeite Bilder",
 	"Generate chat titles automatically from conversation content.": "Erzeugt Chat-Titel automatisch aus dem Inhalt der Unterhaltung.",
+	"Generate Image": "",
 	"Generate message pair": "",
 	"Generate Message Pair": "Nachrichtenpaar generieren",
 	"Generate suggested follow-up prompts after responses.": "Erzeugt nach Antworten Vorschläge für Folgefragen.",
