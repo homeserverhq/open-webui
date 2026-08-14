@@ -262,4 +262,5 @@ If you believe you've found a security vulnerability, or something that shouldn'
 
 ---
 
+
 Created by [Timothy Jaeryang Baek](https://github.com/tjbck) - Let's make Open WebUI even more amazing together! 💪
