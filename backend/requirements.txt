@@ -162,3 +162,11 @@ opentelemetry-instrumentation-logging==0.63b1
 opentelemetry-instrumentation-httpx==0.63b1
 opentelemetry-instrumentation-aiohttp-client==0.63b1
 opentelemetry-instrumentation-system-metrics==0.63b1
+
+## Document processing
+python-docx==1.2.0
+docx-revisions==0.1.5
+odfpy==1.4.1
+PyMuPDF==1.28.2
+pytesseract==0.3.13
+qrcode==8.2
