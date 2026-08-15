@@ -2175,23 +2175,24 @@ CONTEXT_COMPACTION_PROMPT_TEMPLATE = os.getenv('CONTEXT_COMPACTION_PROMPT_TEMPLA
 TITLE_GENERATION_PROMPT_TEMPLATE = os.getenv('TITLE_GENERATION_PROMPT_TEMPLATE', '')
 
 DEFAULT_TITLE_GENERATION_PROMPT_TEMPLATE = """### Task:
-Generate a concise title summarizing the chat history.
+Generate a concise, 3-5 word title with an emoji summarizing the chat history.
 ### Guidelines:
 - The title should clearly represent the main theme or subject of the conversation.
-- Keep it short: 2-4 words is best.
-- Do not use emojis, quotation marks, or special formatting.
+- Keep it short: 3-5 words is best.
+- Use one emoji to enhance understanding of the topic, but do not use quotation marks or special formatting.
 - Write the title in the chat's primary language; default to English if multilingual.
 - Prioritize accuracy over creativity.
+- Include a fitting emoji before every title.
 - Your entire response must consist solely of the JSON object, without any introductory or concluding text.
 - The output must be a single, raw JSON object, without any markdown code fences or other encapsulating text.
 - Ensure no conversational text, affirmations, or explanations precede or follow the raw JSON output, as this will cause direct parsing failure.
 ### Output:
 JSON format: { "title": "your concise title here" }
 ### Examples:
-- { "title": "Stock Trends" },
-- { "title": "Chocolate Chip Cookies" },
-- { "title": "Music Streaming" },
-- { "title": "Remote Work" }
+- { "title": "📉 Stock Trends in 2026" },
+- { "title": "🍪 Homemade Chocolate Chip Cookies" },
+- { "title": "🎧 Evolution of Music Streaming" },
+- { "title": "🏠 Remote Work Best Practices" }
 ### Chat History:
 <chat_history>
 {{MESSAGES:END:2}}

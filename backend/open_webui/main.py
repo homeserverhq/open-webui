@@ -1212,6 +1212,7 @@ async def chat_completion(
             metadata['chat_id'] = str(uuid4())
 
         initial_title_generation = None
+        initial_title_ctx = None
         if is_new_chat and tasks and TASKS.TITLE_GENERATION in tasks:
             initial_title_generation = tasks.pop(TASKS.TITLE_GENERATION)
 
@@ -1374,7 +1375,7 @@ async def chat_completion(
                             'message_id': all_assistant_ids[0],
                         }
                         event_emitter = await get_event_emitter(title_metadata, update_db=False)
-                        title_ctx = {
+                        initial_title_ctx = {
                             'request': request,
                             'form_data': form_data,
                             'user': user,
@@ -1382,14 +1383,6 @@ async def chat_completion(
                             'tasks': {TASKS.TITLE_GENERATION: initial_title_generation},
                             'event_emitter': event_emitter,
                         }
-
-                        async def run_initial_title_generation():
-                            try:
-                                await background_tasks_handler(title_ctx)
-                            except Exception as e:
-                                log.debug(f'Error generating initial chat title: {e}')
-
-                        asyncio.create_task(run_initial_title_generation())
                 else:
                     # Existing chat — verify ownership
                     if not await Chats.is_chat_owner(chat_id, user.id) and user.role != 'admin':
@@ -1544,7 +1537,7 @@ async def chat_completion(
             detail=str(e),
         )
 
-    async def process_chat(request, form_data, user, metadata, model, tasks=None):
+    async def process_chat(request, form_data, user, metadata, model, tasks=None, initial_title_ctx=None):
         try:
             form_data, metadata, events = await process_chat_payload(request, form_data, user, metadata, model)
 
@@ -1567,7 +1560,21 @@ async def chat_completion(
 
             ctx = await build_chat_response_context(request, form_data, user, model, metadata, tasks, events)
 
-            return await process_chat_response(response, ctx)
+            result = await process_chat_response(response, ctx)
+
+            # Generate the initial title only after the first assistant response has
+            # been persisted, so it doesn't race ahead of the stream.
+            if initial_title_ctx is not None:
+
+                async def run_initial_title_generation():
+                    try:
+                        await background_tasks_handler(initial_title_ctx)
+                    except Exception as e:
+                        log.debug(f'Error generating initial chat title: {e}')
+
+                asyncio.create_task(run_initial_title_generation())
+
+            return result
         except asyncio.CancelledError:
             log.info('Chat processing was cancelled')
             try:
@@ -1743,6 +1750,7 @@ async def chat_completion(
                     k: v for k, v in (tasks or {}).items() if k not in (TASKS.TITLE_GENERATION, TASKS.TAGS_GENERATION)
                 }
                 or None,
+                initial_title_ctx if idx == 0 else None,
             )
             if is_internal:
                 subagent_results.append(await process)
@@ -1782,7 +1790,7 @@ async def chat_completion(
     else:
         # Legacy/direct: single model, synchronous
         metadata['message_id'] = message_ids[0]['message_id']
-        return await process_chat(request, form_data, user, metadata, model, tasks)
+        return await process_chat(request, form_data, user, metadata, model, tasks, initial_title_ctx)
 
 
 # Alias for chat_completion (Legacy)
