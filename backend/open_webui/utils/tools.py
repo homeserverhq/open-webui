@@ -124,7 +124,7 @@ def bearer_auth_header(token: Any) -> dict[str, str]:
 
 # Tool id of the MCPKeyVault tool whose user valves supply per-user API keys.
 # Overridable via MCPKEYVAULT_TOOL_ID env var to match the installed tool's id.
-_MCPKEYVAULT_TOOL_ID = os.environ.get('MCPKEYVAULT_TOOL_ID', 'mcpkeyvault')
+_MCPKEYVAULT_TOOL_ID = os.environ.get('MCPKEYVAULT_TOOL_ID', 'mcpkeyvault_tool')
 
 
 async def build_tool_server_headers(
