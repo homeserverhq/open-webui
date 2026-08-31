@@ -113,7 +113,7 @@
 	import NotificationToast from '../NotificationToast.svelte';
 	import Spinner from '../common/Spinner.svelte';
 	import Modal from '../common/Modal.svelte';
-	import { isEmbedWindow } from '../common/FullHeightIframe.svelte';
+	import { isEmbedWindow, isEmbedFileId } from '../common/FullHeightIframe.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Sidebar from '../icons/Sidebar.svelte';
 	import Image from '../common/Image.svelte';
@@ -1154,6 +1154,55 @@
 		const isOwnEmbed = isEmbedWindow(event.source);
 		const isTrusted =
 			isSameOrigin || isOwnEmbed || ($settings?.iframeSandboxAllowSameOrigin ?? false);
+
+		// Sandboxed embeds can request the file content their own HTML already references.
+		// Only serve our own embed iframes, and only file ids that appear in a rendered embed.
+		if (type === 'webui:file:get' && isOwnEmbed) {
+			const request = event.data as { type: string; text: string } & Record<string, unknown>;
+			const requestId = typeof request.requestId === 'string' ? request.requestId : '';
+			const fileUrl = typeof request.url === 'string' ? request.url : '';
+
+			if (requestId !== '' && fileUrl !== '') {
+				const match = fileUrl.match(
+					/^\/api\/v1\/files\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content(?:\/.*)?$/
+				);
+				if (match && isEmbedFileId(match[1])) {
+					try {
+						const headers: Record<string, string> = {};
+						if (localStorage.token) {
+							headers['Authorization'] = `Bearer ${localStorage.token}`;
+						}
+						const res = await fetch(fileUrl, { headers, credentials: 'include' });
+						const buffer = await res.arrayBuffer();
+						(event.source as Window)?.postMessage(
+							{
+								type: 'webui:file:get:response',
+								requestId,
+								ok: res.ok,
+								status: res.status,
+								contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+								buffer
+							},
+							'*',
+							[buffer]
+						);
+					} catch (error) {
+						console.error(error);
+						(event.source as Window)?.postMessage(
+							{
+								type: 'webui:file:get:response',
+								requestId,
+								ok: false,
+								status: 0,
+								error: String(error)
+							},
+							'*'
+						);
+					}
+				}
+			}
+			return;
+		}
 
 		// Non-prompt message types are always restricted to same-origin only.
 		if (!isSameOrigin && !promptTypes.includes(type)) {

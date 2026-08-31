@@ -3,6 +3,19 @@
 	const embedWindows = new Set<Window>();
 
 	export const isEmbedWindow = (source: unknown): boolean => embedWindows.has(source as Window);
+
+	// file ids referenced by embeds rendered here; Chat.svelte lets embeds fetch only these
+	const embedFileIds = new Set<string>();
+
+	export const isEmbedFileId = (id: string): boolean => embedFileIds.has(id);
+
+	const registerEmbedFileIds = (html: string): void => {
+		for (const match of html.matchAll(
+			/\/api\/v1\/files\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content/g
+		)) {
+			embedFileIds.add(match[1]);
+		}
+	};
 </script>
 
 <script lang="ts">
@@ -63,6 +76,7 @@
 		} else {
 			iframeDoc = await processHtmlForDeps(src as string);
 			iframeSrc = null;
+			registerEmbedFileIds(iframeDoc);
 		}
 	};
 
