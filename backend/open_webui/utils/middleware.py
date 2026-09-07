@@ -3300,10 +3300,6 @@ async def background_tasks_handler(ctx):
 
             if is_saved_chat_id(metadata.get('chat_id')):  # Only update titles and tags for saved chats
                 if TASKS.TITLE_GENERATION in tasks:
-                    user_message = get_last_user_message(messages)
-                    if user_message and len(user_message) > 100:
-                        user_message = user_message[:100] + '...'
-
                     title = None
                     if tasks[TASKS.TITLE_GENERATION]:
                         res = await generate_title(
@@ -3320,46 +3316,43 @@ async def background_tasks_handler(ctx):
                             if len(res.get('choices', [])) == 1:
                                 response_message = res.get('choices', [])[0].get('message', {})
 
-                                title_string = (
-                                    response_message.get('content')
-                                    or response_message.get(
-                                        'reasoning_content',
-                                    )
-                                    or message.get('content', user_message)
+                                title_string = response_message.get('content') or response_message.get(
+                                    'reasoning_content'
                                 )
                             else:
                                 title_string = ''
 
-                            title_string = title_string[title_string.find('{') : title_string.rfind('}') + 1]
+                            if title_string:
+                                # Strip any markdown code fences so bare text titles still work.
+                                title_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', title_string).strip()
 
-                            try:
-                                title = JSONCodec.loads(title_string).get('title', user_message)
-                            except Exception as e:
-                                title = ''
+                                # Prefer a JSON object if the model returned one.
+                                title = None
+                                if '{' in title_text and '}' in title_text:
+                                    json_part = title_text[title_text.find('{') : title_text.rfind('}') + 1]
+                                    try:
+                                        title = JSONCodec.loads(json_part).get('title')
+                                    except Exception as e:
+                                        title = None
 
-                            if not title:
-                                title = messages[0].get('content', user_message)
+                                    if title is not None and isinstance(title, str):
+                                        title = title.strip().strip('"').strip()
 
-                            await Chats.update_chat_title_by_id(metadata['chat_id'], title)
+                                # Otherwise fall back to the plain text itself.
+                                if not title and title_text:
+                                    title = title_text.strip().strip('"').strip()
 
-                            await event_emitter(
-                                {
-                                    'type': 'chat:title',
-                                    'data': title,
-                                }
-                            )
+                            # Only persist/announce a title if we actually produced one;
+                            # otherwise leave the chat with its default "New Chat" title.
+                            if title:
+                                await Chats.update_chat_title_by_id(metadata['chat_id'], title)
 
-                    if title == None and len(messages) == 2 and (not messages_map or len(messages_map) <= 2):
-                        title = messages[0].get('content', user_message)
-
-                        await Chats.update_chat_title_by_id(metadata['chat_id'], title)
-
-                        await event_emitter(
-                            {
-                                'type': 'chat:title',
-                                'data': message.get('content', user_message),
-                            }
-                        )
+                                await event_emitter(
+                                    {
+                                        'type': 'chat:title',
+                                        'data': title,
+                                    }
+                                )
 
                 if TASKS.TAGS_GENERATION in tasks and tasks[TASKS.TAGS_GENERATION]:
                     res = await generate_chat_tags(
