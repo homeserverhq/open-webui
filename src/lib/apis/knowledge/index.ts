@@ -377,7 +377,8 @@ export const searchKnowledgeBases = async (
 	page: number | null = null,
 	source: string | null = null,
 	orderBy: string | null = null,
-	direction: string | null = null
+	direction: string | null = null,
+	signal?: AbortSignal
 ) => {
 	let error = null;
 
@@ -391,6 +392,7 @@ export const searchKnowledgeBases = async (
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/knowledge/search?${searchParams.toString()}`, {
 		method: 'GET',
+		signal,
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
@@ -405,6 +407,7 @@ export const searchKnowledgeBases = async (
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = err.detail;
 			console.error(err);
 			return null;
@@ -931,6 +934,34 @@ export const reindexKnowledgeFiles = async (token: string) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/knowledge/reindex`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err.detail;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
+export const reindexKnowledgeMetadata = async (token: string) => {
+	let error = null;
+
+	const res = await fetch(`${WEBUI_API_BASE_URL}/knowledge/metadata/reindex`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',

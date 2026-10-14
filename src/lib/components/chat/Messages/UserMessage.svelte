@@ -7,7 +7,8 @@
 	import {
 		copyToClipboard as _copyToClipboard,
 		formatMessageTimestamp,
-		formatMessageTimestampFull
+		formatMessageTimestampFull,
+		isRasterImageContentType
 	} from '$lib/utils';
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 	import equal from 'fast-deep-equal';
@@ -21,7 +22,7 @@
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import SubagentResultRow from './SubagentResultRow.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 	export let user;
 
 	export let chatId;
@@ -56,6 +57,17 @@
 	let editScrollContainer: HTMLDivElement;
 
 	let message = structuredClone(history.messages[messageId]);
+	$: authorId = message.user_id || message.user?.id || user?.id;
+	$: author =
+		message.user?.id === authorId
+			? message.user
+			: $_user?.id === authorId
+				? $_user
+				: user?.id === authorId
+					? user
+					: null;
+	$: isOwn = Boolean($_user?.id && authorId === $_user.id);
+	$: authorName = author?.name || $i18n.t('Unknown User');
 	let timerExpanded = false;
 	$: if (history.messages) {
 		const source = history.messages[messageId];
@@ -77,7 +89,7 @@
 	const editMessageHandler = async () => {
 		edit = true;
 		editedContent = message?.content ?? '';
-		editedFiles = message.files;
+		editedFiles = [...(message.files ?? [])];
 
 		await tick();
 
@@ -130,16 +142,25 @@
 />
 
 <div
-	class=" flex w-full user-message group"
+	class="flex w-full user-message group {!isOwn && !message?.meta?.internal
+		? compactPreview
+			? 'my-2'
+			: 'mb-2'
+		: ''}"
 	dir={$settings.chatDirection}
 	id="message-{message.id}"
 	style="scroll-margin-top: 3rem;"
 >
-	{#if !($settings?.chatBubble ?? true) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
-		<div class={`shrink-0 ltr:mr-2 rtl:ml-2 hidden @lg:flex mt-0.5`}>
+	{#if !compactPreview && (!($settings?.chatBubble ?? true) || !isOwn) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
+		<div
+			class="shrink-0 me-2 {($settings?.chatBubble ?? true) ? 'mt-6' : 'hidden @lg:flex mt-0.5'}"
+		>
+			<!-- LICENSE covers this Open WebUI fallback logo.
+			Do not alter, remove, obscure, or replace it except as LICENSE permits:
+			https://docs.openwebui.com/license. -->
 			<ProfileImage
-				src={user?.id
-					? `${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`
+				src={authorId
+					? `${WEBUI_API_BASE_URL}/users/${authorId}/profile/image`
 					: `${WEBUI_BASE_URL}/static/favicon.png`}
 				className={'size-7 user-message-profile-image'}
 			/>
@@ -152,18 +173,17 @@
 			? ''
 			: 'pl-1'}"
 	>
-		{#if !($settings?.chatBubble ?? true) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
-			<div>
-				<Name>
-					{#if message.user}
-						{$i18n.t('You')}
-						<span class=" text-gray-500 text-[0.9375rem] font-normal">{message?.user ?? ''}</span>
-					{:else if $settings.showUsername || $_user?.name !== user?.name}
-						{user?.name ?? $i18n.t('You')}
-					{:else}
-						{$i18n.t('You')}
-					{/if}
-				</Name>
+		{#if !compactPreview && (!($settings?.chatBubble ?? true) || !isOwn) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
+			<div
+				class={($settings?.chatBubble ?? true)
+					? 'mb-1 ps-2 text-xs text-gray-400 dark:text-gray-500'
+					: ''}
+			>
+				{#if $settings?.chatBubble ?? true}
+					{authorName}
+				{:else}
+					<Name>{isOwn && !$settings.showUsername ? $i18n.t('You') : authorName}</Name>
+				{/if}
 			</div>
 		{/if}
 
@@ -179,8 +199,10 @@
 								file.url?.startsWith('data') || file.url?.startsWith('http')
 									? file.url
 									: `${WEBUI_API_BASE_URL}/files/${file.url}${file?.content_type ? '/content' : ''}`}
-							<div class={($settings?.chatBubble ?? true) ? 'self-end' : ''}>
-								{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
+							<div
+								class={($settings?.chatBubble ?? true) ? (isOwn ? 'self-end' : 'self-start') : ''}
+							>
+								{#if file.type === 'image' || isRasterImageContentType(file?.content_type)}
 									<Image src={fileUrl} imageClassName=" max-h-96 rounded-lg" />
 								{:else}
 									<FileItem
@@ -199,11 +221,16 @@
 			{/if}
 
 			{#if edit === true}
-				<div class=" w-full bg-gray-50 dark:bg-gray-800 rounded-3xl px-4 py-3 mb-2">
+				<div
+					class=" w-full bg-gray-50 dark:bg-gray-800 rounded-3xl px-4 py-3 mb-2 {($settings?.highContrastMode ??
+					false)
+						? 'focus-within:outline focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-blue-500'
+						: ''}"
+				>
 					{#if (editedFiles ?? []).length > 0}
 						<div class="flex items-center flex-wrap gap-2 -mx-2 mb-1">
 							{#each editedFiles as file, fileIdx}
-								{#if file.type === 'image' || (file?.content_type ?? '').startsWith('image/')}
+								{#if file.type === 'image' || isRasterImageContentType(file?.content_type)}
 									{@const fileUrl =
 										file.url?.startsWith('data') || file.url?.startsWith('http')
 											? file.url
@@ -222,7 +249,7 @@
 												class=" bg-white text-black border border-white rounded-full {($settings?.highContrastMode ??
 												false)
 													? ''
-													: 'group-hover:visible invisible transition'}"
+													: 'hover-reveal transition'}"
 												type="button"
 												on:click={() => {
 													editedFiles.splice(fileIdx, 1);
@@ -270,7 +297,7 @@
 						<textarea
 							id="message-edit-{message.id}"
 							bind:this={messageEditTextAreaElement}
-							class=" bg-transparent outline-hidden w-full resize-none text-[0.9375rem]"
+							class=" bg-transparent outline-hidden focus-visible:outline-none! w-full resize-none text-[0.9375rem]"
 							bind:value={editedContent}
 							on:input={(e) => {
 								const messagesContainer = document.getElementById('messages-container');
@@ -372,11 +399,15 @@
 				<SubagentResultRow content={message.content} result={message.meta} />
 			{:else if message.content !== ''}
 				<div class="w-full">
-					<div class="flex {($settings?.chatBubble ?? true) ? 'justify-end pb-1' : 'w-full'}">
+					<div
+						class="flex {($settings?.chatBubble ?? true)
+							? `${isOwn ? 'justify-end' : 'justify-start'} pb-1`
+							: 'w-full'}"
+					>
 						<div
 							class="rounded-3xl {($settings?.chatBubble ?? true)
 								? `max-w-[90%] px-4 py-1.5  bg-gray-50 dark:bg-gray-850 ${
-										message.files ? 'rounded-tr-lg' : ''
+										message.files ? (isOwn ? 'rounded-se-lg' : 'rounded-ss-lg') : ''
 									}`
 								: ' w-full'}"
 						>
@@ -407,29 +438,32 @@
 			{#if edit !== true && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
 				<div
 					class=" flex {($settings?.chatBubble ?? true)
-						? 'justify-end'
+						? isOwn
+							? 'justify-end'
+							: 'justify-start'
 						: 'items-center'}  text-gray-600 dark:text-gray-500"
 				>
 					{#if message.timestamp}
 						<Tooltip
-							className="flex self-center {($settings?.chatBubble ?? true) ? 'mr-1' : 'order-last'}"
-							content={formatMessageTimestampFull(message.timestamp * 1000)}
+							className="flex self-center {($settings?.chatBubble ?? true) && isOwn
+								? 'mr-1'
+								: 'order-last'}"
+							content={formatMessageTimestampFull(message.timestamp * 1000, $i18n.language)}
 							placement="bottom"
 						>
 							<time
 								datetime={new Date(message.timestamp * 1000).toISOString()}
-								class="{compactPreview
-									? ''
-									: 'invisible group-hover:visible'} {($settings?.chatBubble ?? true)
+								class="{compactPreview ? '' : 'hover-reveal'} {($settings?.chatBubble ?? true) &&
+								isOwn
 									? 'mr-1'
 									: 'ml-1 shrink-0 whitespace-nowrap'} text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-600 select-none"
 							>
-								{formatMessageTimestamp(message.timestamp * 1000)}
+								{formatMessageTimestamp(message.timestamp * 1000, $i18n.language)}
 							</time>
 						</Tooltip>
 					{/if}
 
-					{#if !compactPreview && !($settings?.chatBubble ?? true)}
+					{#if !compactPreview && (!($settings?.chatBubble ?? true) || !isOwn)}
 						{#if siblings.length > 1}
 							<div class="flex self-center" dir="ltr">
 								<button
@@ -530,7 +564,7 @@
 							<button
 								class="{($settings?.highContrastMode ?? false)
 									? ''
-									: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition edit-user-message-button"
+									: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition edit-user-message-button"
 								aria-label={$i18n.t('Edit')}
 								on:click={() => {
 									editMessageHandler();
@@ -559,7 +593,7 @@
 							<button
 								class="{($settings?.highContrastMode ?? false)
 									? ''
-									: 'invisible group-hover:visible'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
+									: 'hover-reveal'} p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg dark:hover:text-white hover:text-black transition"
 								aria-label={$i18n.t('Copy')}
 								on:click={() => {
 									copyToClipboard(message.content);
@@ -590,7 +624,7 @@
 									aria-label={$i18n.t('Delete')}
 									class="{($settings?.highContrastMode ?? false)
 										? ''
-										: 'invisible group-hover:visible'} p-1 rounded-sm dark:hover:text-white hover:text-black transition"
+										: 'hover-reveal'} p-1 rounded-sm dark:hover:text-white hover:text-black transition"
 									on:click={(e) => {
 										if (e.shiftKey) {
 											deleteMessageHandler();
@@ -618,7 +652,7 @@
 						{/if}
 					{/if}
 
-					{#if !compactPreview && ($settings?.chatBubble ?? true)}
+					{#if !compactPreview && ($settings?.chatBubble ?? true) && isOwn}
 						{#if siblings.length > 1}
 							<div class="flex self-center" dir="ltr">
 								<button

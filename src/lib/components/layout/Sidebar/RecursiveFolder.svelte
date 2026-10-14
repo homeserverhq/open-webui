@@ -158,19 +158,21 @@
 		}
 	};
 
+	$: isWritable = !folders[folderId]?.shared || folders[folderId]?.permission === 'write';
+
 	const onDragOver = (e) => {
-		e.preventDefault();
 		e.stopPropagation();
-		if (dragged || parentDragged || folders[folderId]?.shared) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
+		e.preventDefault();
 		draggedOver = true;
 	};
 
 	const onDrop = async (e) => {
 		e.preventDefault();
 		e.stopPropagation();
-		if (dragged || parentDragged) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
 
@@ -301,7 +303,7 @@
 
 	const onDragLeave = (e) => {
 		e.preventDefault();
-		if (dragged || parentDragged) {
+		if (dragged || parentDragged || !isWritable) {
 			return;
 		}
 
@@ -426,8 +428,10 @@
 	});
 
 	onDestroy(() => {
+		delete folderRegistry[folderId];
+
 		if (folderElement) {
-			folderElement.addEventListener('dragover', onDragOver);
+			folderElement.removeEventListener('dragover', onDragOver);
 			folderElement.removeEventListener('drop', onDrop);
 			folderElement.removeEventListener('dragleave', onDragLeave);
 
@@ -454,14 +458,14 @@
 	};
 
 	const updateHandler = async ({ name, meta, data }) => {
-		if (name === '') {
+		name = name?.trim();
+		if (!name) {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
 		}
 
 		const currentName = folders[folderId].name;
 
-		name = name.trim();
 		folders[folderId].name = name;
 
 		const res = await updateFolderById(localStorage.token, folderId, {
@@ -526,7 +530,6 @@
 	let pendingUpsertChats = [];
 
 	export const setFolderItems = async (append = false) => {
-		await tick();
 		if (open && chatsLoading) {
 			if (!append) {
 				queuedReload = true;
@@ -535,10 +538,17 @@
 		}
 
 		if (open) {
+			chatsLoading = true;
+		}
+
+		await tick();
+		if (open) {
+			if (!append) {
+				pendingUpsertChats = [];
+			}
 			// Always use getSharedFolderChats so owners also see chats
 			// created by users who have write access to this folder.
 			const nextPage = append ? chatsPage + 1 : 1;
-			chatsLoading = true;
 			try {
 				const res = await getSharedFolderChats(localStorage.token, folderId, {
 					page: nextPage
@@ -582,7 +592,7 @@
 		}
 	};
 
-	$: if (open && chats === null) {
+	$: if (open && chats === null && !chatsLoading) {
 		setFolderItems();
 	}
 
@@ -645,12 +655,11 @@
 	};
 
 	const createSubFolderHandler = async ({ name, meta, data, parent_id }) => {
-		if (name === '') {
+		name = name?.trim();
+		if (!name) {
 			toast.error($i18n.t('Folder name cannot be empty.'));
 			return;
 		}
-
-		name = name.trim();
 
 		const res = await createNewFolder(localStorage.token, {
 			name,
@@ -737,12 +746,12 @@
 		<div class="w-full group">
 			<div
 				id="folder-{folderId}-button"
-				class="relative w-full py-1 px-1.5 rounded-xl flex items-center gap-1.5 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 transition {$selectedFolder?.id ===
+				class="relative w-full py-1 px-1.5 rounded-xl flex items-center gap-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition {$selectedFolder?.id ===
 				folderId
 					? 'bg-gray-100/80 dark:bg-gray-850/50 selected'
 					: ''}"
 				on:dblclick={(e) => {
-					if (folders[folderId]?.shared && folders[folderId]?.permission !== 'write') return;
+					if (!isWritable) return;
 					if (clickTimer) {
 						clearTimeout(clickTimer); // cancel the single-click action
 						clickTimer = null;
@@ -752,6 +761,7 @@
 				role="button"
 				tabindex="0"
 				on:click={async (e) => {
+					e.stopPropagation();
 					if (shouldIgnoreRowClick(e.target)) return;
 					if (clickTimer) {
 						clearTimeout(clickTimer);
@@ -770,12 +780,9 @@
 						openFolderHandler();
 					}
 				}}
-				on:pointerup={(e) => {
-					e.stopPropagation();
-				}}
 			>
 				<button
-					class="text-gray-600 dark:text-gray-400 transition-all p-1 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-lg"
+					class="text-gray-600 dark:text-gray-400 transition-all p-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg"
 					on:click={(e) => {
 						e.stopPropagation();
 						e.stopImmediatePropagation();
@@ -788,7 +795,7 @@
 							<Emoji className="size-3.5" shortCode={folders[folderId].meta.icon} />
 						</div>
 
-						<div class="hidden group-hover:flex transition-all p-[1px]">
+						<div class="hidden group-hover:flex transition-all p-[0.0625rem]">
 							{#if open}
 								<ChevronDown className=" size-3" strokeWidth="1.5" />
 							{:else}
@@ -800,7 +807,7 @@
 							<FolderIcon className="size-3.5" strokeWidth="1.5" />
 						</div>
 
-						<div class="hidden group-hover:flex transition-all p-[1px]">
+						<div class="hidden group-hover:flex transition-all p-[0.0625rem]">
 							{#if open}
 								<ChevronDown className=" size-3" strokeWidth="1.5" />
 							{:else}
@@ -831,8 +838,7 @@
 							}}
 							on:keydown={(e) => {
 								if (e.key === 'Enter') {
-									updateHandler({ name });
-									edit = false;
+									e.currentTarget.blur();
 								}
 							}}
 							class="w-full h-full bg-transparent outline-hidden"
@@ -844,7 +850,7 @@
 
 						{#if !folders[folderId]?.shared && (folders[folderId]?.unread_count ?? 0) > 0}
 							<div
-								class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-md bg-sky-500/10 px-1 text-[10px] font-semibold leading-4 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300"
+								class="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-md bg-sky-500/10 px-1 text-[0.625rem] font-semibold leading-4 text-sky-600 dark:bg-sky-400/10 dark:text-sky-300"
 								title={$i18n.t('Unread')}
 							>
 								{formatUnreadCount(folders[folderId].unread_count)}
@@ -853,11 +859,12 @@
 					{/if}
 				</div>
 
-				{#if !folders[folderId]?.shared || folders[folderId]?.permission === 'write'}
+				{#if isWritable}
 					<button
-						class="absolute z-10 right-2 invisible group-hover:visible self-center flex items-center dark:text-gray-300"
+						class="absolute z-10 right-2 hover-reveal self-center flex items-center dark:text-gray-300"
 					>
 						<FolderMenu
+							canShare={$user?.role === 'admin' || !folders[folderId]?.shared}
 							onEdit={() => {
 								showFolderModal = true;
 							}}
@@ -888,9 +895,9 @@
 		</div>
 
 		<div slot="content" class="w-full">
-			{#if (folders[folderId]?.childrenIds ?? []).length > 0 || (chats ?? []).length > 0 || hasMoreChats}
+			{#if (folders[folderId]?.childrenIds ?? []).length > 0 || chats !== null || hasMoreChats || chatsLoading}
 				<div
-					class="ml-3 pl-1 mt-[1px] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
+					class="ml-3 pl-1 mt-[0.0625rem] flex flex-col overflow-y-auto scrollbar-hidden border-s border-gray-100 dark:border-gray-900"
 				>
 					{#if folders[folderId]?.childrenIds}
 						{@const children = folders[folderId]?.childrenIds
@@ -925,6 +932,24 @@
 						{/each}
 					{/if}
 
+					{#if chats === null && chatsLoading}
+						<div class="flex gap-1 px-2 py-1.5" aria-label={$i18n.t('Loading')}>
+							<span class="size-1 rounded-full bg-gray-400 animate-pulse dark:bg-gray-600"></span>
+							<span
+								class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:150ms] dark:bg-gray-600"
+							></span>
+							<span
+								class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:300ms] dark:bg-gray-600"
+							></span>
+						</div>
+					{/if}
+
+					{#if chats !== null && chats.length === 0 && !chatsLoading}
+						<div class="px-2 py-0.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
+							{$i18n.t('No chats')}
+						</div>
+					{/if}
+
 					{#each chats ?? [] as chat (chat.id)}
 						<ChatItem
 							id={chat.id}
@@ -933,8 +958,12 @@
 							updatedAt={chat.updated_at}
 							lastReadAt={chat.last_read_at}
 							active={chat.active ?? false}
-							ownerName={folders[folderId]?.shared ? (chat.owner_name ?? null) : null}
-							ownerUserId={folders[folderId]?.shared && chat.owner_name ? chat.user_id : null}
+							ownerName={chat.owner_name ?? null}
+							ownerUserId={folders[folderId]?.showOwnerInfo ||
+							folders[folderId]?.shared ||
+							chat.user_id !== $user?.id
+								? chat.user_id
+								: null}
 							readonly={chat.user_id !== $user?.id}
 							{shiftKey}
 							onReadStateChange={applyReadState}
@@ -946,12 +975,12 @@
 
 					{#if hasMoreChats}
 						<button
-							class="w-full px-2 py-0.5 text-left text-[11px] text-gray-400 transition hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-600 dark:hover:text-gray-300"
+							class="w-full px-2 py-0.5 text-left text-[0.6875rem] text-gray-400 transition hover:text-gray-700 disabled:cursor-not-allowed dark:text-gray-600 dark:hover:text-gray-300"
 							disabled={chatsLoading}
 							on:click={() => setFolderItems(true)}
 						>
 							{#if chatsLoading}
-								<div class="flex gap-1 px-2 py-1.5" aria-label="Loading">
+								<div class="flex gap-1 px-2 py-1.5" aria-label={$i18n.t('Loading')}>
 									<span class="size-1 rounded-full bg-gray-400 animate-pulse dark:bg-gray-600"
 									></span>
 									<span
@@ -966,18 +995,6 @@
 							{/if}
 						</button>
 					{/if}
-				</div>
-			{/if}
-
-			{#if chats === null && chatsLoading}
-				<div class="flex gap-1 px-2 py-1.5" aria-label="Loading">
-					<span class="size-1 rounded-full bg-gray-400 animate-pulse dark:bg-gray-600"></span>
-					<span
-						class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:150ms] dark:bg-gray-600"
-					></span>
-					<span
-						class="size-1 rounded-full bg-gray-400 animate-pulse [animation-delay:300ms] dark:bg-gray-600"
-					></span>
 				</div>
 			{/if}
 		</div>

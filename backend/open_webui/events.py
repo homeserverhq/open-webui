@@ -8,9 +8,10 @@ import uuid
 from types import SimpleNamespace
 from typing import Any
 
-from open_webui.env import ENABLE_PLUGINS, VERSION
-from open_webui.models.config import Config
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from open_webui.env import ENABLE_FUNCTIONS, VERSION
+from open_webui.models.config import Config
 from open_webui.retrieval.web.utils import validate_url
 from open_webui.utils.webhook import post_webhook
 
@@ -99,8 +100,40 @@ class EventDefinitions(BaseModel):
     AUTH_SIGNUP: EventDefinition = EventDefinition(
         name='auth.signup', description='A user account was created through signup.', message='User signed up'
     )
+    AUTH_MFA_ENROLLED: EventDefinition = EventDefinition(
+        name='auth.mfa.enrolled', description='MFA enrolled.', message='MFA enrolled'
+    )
+    AUTH_MFA_REPLACED: EventDefinition = EventDefinition(
+        name='auth.mfa.replaced', description='MFA replaced.', message='MFA replaced'
+    )
+    AUTH_MFA_FAILED: EventDefinition = EventDefinition(
+        name='auth.mfa.failed', description='MFA failed.', message='MFA failed'
+    )
+    AUTH_MFA_THROTTLED: EventDefinition = EventDefinition(
+        name='auth.mfa.throttled', description='MFA throttled.', message='MFA throttled'
+    )
+    AUTH_MFA_RECOVERY_USED: EventDefinition = EventDefinition(
+        name='auth.mfa.recovery_used', description='MFA recovery used.', message='MFA recovery used'
+    )
+    AUTH_MFA_RECOVERY_CODES_REGENERATED: EventDefinition = EventDefinition(
+        name='auth.mfa.recovery_codes_regenerated',
+        description='MFA recovery codes regenerated.',
+        message='MFA recovery codes regenerated',
+    )
+    AUTH_MFA_RESET_REQUESTED: EventDefinition = EventDefinition(
+        name='auth.mfa.reset_requested', description='MFA reset requested.', message='MFA reset requested'
+    )
+    AUTH_MFA_RESET_COMPLETED: EventDefinition = EventDefinition(
+        name='auth.mfa.reset_completed', description='MFA reset completed.', message='MFA reset completed'
+    )
+    AUTH_MFA_POLICY_CHANGED: EventDefinition = EventDefinition(
+        name='auth.mfa.policy_changed', description='MFA policy changed.', message='MFA policy changed'
+    )
     AUTH_LOGIN: EventDefinition = EventDefinition(
         name='auth.login', description='A user successfully logged in.', message='User logged in'
+    )
+    AUTH_SESSIONS_REVOKED: EventDefinition = EventDefinition(
+        name='auth.sessions_revoked', description='All user sessions were revoked.', message='User sessions revoked'
     )
     AUTH_LOGOUT: EventDefinition = EventDefinition(
         name='auth.logout', description='A user logged out.', message='User logged out'
@@ -411,6 +444,11 @@ class EventDefinitions(BaseModel):
         description='Retrieval content was processed.',
         message='Retrieval Content processed',
     )
+    RETRIEVAL_CONTENT_PROCESS_FAILED: EventDefinition = EventDefinition(
+        name='retrieval.content.process_failed',
+        description='Retrieval content processing failed.',
+        message='Retrieval Content process failed',
+    )
     RETRIEVAL_COLLECTION_DELETED: EventDefinition = EventDefinition(
         name='retrieval.collection.deleted',
         description='A retrieval collection was deleted.',
@@ -666,6 +704,7 @@ NOTIFICATION_EVENTS = (
     EVENTS.CHAT_FAILED.name,
     EVENTS.CHANNEL_MESSAGE.name,
     EVENTS.CALENDAR_ALERT.name,
+    EVENTS.RETRIEVAL_CONTENT_PROCESS_FAILED.name,
 )
 
 
@@ -816,7 +855,7 @@ async def event_target_matches(
     if user_group_ids is None:
         from open_webui.models.groups import Groups
 
-        groups_by_user = await Groups.get_groups_by_member_ids(list(user_ids))
+        groups_by_user = await Groups.get_groups_by_member_ids(list(user_ids), include_inherited=True)
         user_group_ids = {user_id: {group.id for group in groups} for user_id, groups in groups_by_user.items()}
 
     return any(group_ids.intersection(target_group_ids) for group_ids in user_group_ids.values())
@@ -1026,6 +1065,9 @@ def build_event(
 
 
 async def dispatch_webhook_event(app: Any, event: Event) -> None:
+    # LICENSE covers this Open WebUI webhook identifier.
+    # Do not alter, remove, obscure, or replace it except as LICENSE permits:
+    # https://docs.openwebui.com/license.
     name = getattr(getattr(app, 'state', None), 'WEBUI_NAME', 'Open WebUI')
     subject = event.subject or {}
     subject_id = subject.get('id')
@@ -1077,10 +1119,46 @@ class NotificationEventSink:
             schedule_notification_dispatch(app, event)
 
 
+class SocketSessionEventSink:
+    async def handle_event(self, app: Any, event: Event, request: Any | None = None) -> None:
+        from open_webui.socket.main import refresh_chat_access
+
+        if event.event in {
+            EVENTS.FOLDER_ACCESS_UPDATED.name,
+            EVENTS.FOLDER_UPDATED.name,
+            EVENTS.FOLDER_PARENT_UPDATED.name,
+            EVENTS.FOLDER_DELETED.name,
+            EVENTS.GROUP_MEMBER_REMOVED.name,
+            EVENTS.GROUP_MEMBER_ADDED.name,
+            EVENTS.GROUP_UPDATED.name,
+            EVENTS.GROUP_DELETED.name,
+            EVENTS.CHAT_DELETED_ALL.name,
+        }:
+            await refresh_chat_access()
+        elif event.event in {
+            EVENTS.CHAT_SHARED.name,
+            EVENTS.CHAT_UNSHARED.name,
+            EVENTS.CHAT_FOLDER_UPDATED.name,
+            EVENTS.CHAT_DELETED.name,
+        }:
+            await refresh_chat_access((event.subject or {}).get('id'))
+
+        if event.event not in {EVENTS.USER_DELETED.name, EVENTS.USER_ROLE_UPDATED.name}:
+            return
+
+        subject = event.subject or {}
+        if subject.get('type') != 'user' or not subject.get('id'):
+            return
+
+        from open_webui.socket.main import disconnect_user_sessions
+
+        await disconnect_user_sessions(str(subject['id']))
+
+
 async def dispatch_event_functions(
     app: Any, event: Event, request: Any | None = None, extra_function_ids: list[str] | None = None
 ) -> None:
-    if not ENABLE_PLUGINS:
+    if not ENABLE_FUNCTIONS:
         return
 
     from open_webui.models.functions import Functions
@@ -1145,7 +1223,7 @@ class EventFunctionSink:
         schedule_event_function_dispatch(app, event, request)
 
 
-EVENT_SINKS = [EventFunctionSink(), WebhookEventSink(), NotificationEventSink()]
+EVENT_SINKS = [SocketSessionEventSink(), EventFunctionSink(), WebhookEventSink(), NotificationEventSink()]
 
 
 async def publish_event(

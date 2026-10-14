@@ -1,4 +1,3 @@
-import json
 import time
 import uuid
 from functools import lru_cache
@@ -8,8 +7,9 @@ from open_webui.internal.db import Base, get_async_db_context
 from open_webui.models.access_grants import AccessGrantModel, AccessGrants
 from open_webui.models.groups import Groups
 from open_webui.models.users import User, UserModel, UserResponse, Users
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import JSON, BigInteger, Boolean, Column, ForeignKey, Text, delete, func, or_, select, update
+from open_webui.utils.json_codec import JSONCodec
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import JSON, BigInteger, Boolean, Column, ForeignKey, Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ####################
@@ -31,6 +31,32 @@ class Note(Base):
     updated_at = Column(BigInteger)
 
 
+def sanitize_note_data(data: Optional[dict]) -> Optional[dict]:
+    """Sanitize malformed note.data so content.md is always markdown text."""
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        return {'content': {'md': str(data)}}
+
+    content = data.get('content')
+    if not isinstance(content, dict) or 'md' not in content or isinstance(content.get('md'), str):
+        return data
+
+    md = content.get('md') if content.get('md') is not None else ''
+    if isinstance(md, (dict, list)):
+        md = f'```json\n{JSONCodec.dumps(md, indent=2, ensure_ascii=False)}\n```'
+    else:
+        md = str(md)
+
+    return {
+        **data,
+        'content': {
+            **content,
+            'md': md,
+        },
+    }
+
+
 class NoteModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -46,6 +72,11 @@ class NoteModel(BaseModel):
 
     created_at: int  # timestamp in epoch
     updated_at: int  # timestamp in epoch
+
+    @field_validator('data', mode='before')
+    @classmethod
+    def sanitize_data(cls, data):
+        return sanitize_note_data(data)
 
 
 class PinnedNote(Base):
@@ -68,12 +99,22 @@ class NoteForm(BaseModel):
     meta: Optional[dict] = None
     access_grants: Optional[list[dict]] = None
 
+    @field_validator('data', mode='before')
+    @classmethod
+    def sanitize_data(cls, data):
+        return sanitize_note_data(data)
+
 
 class NoteUpdateForm(BaseModel):
     title: Optional[str] = None
     data: Optional[dict] = None
     meta: Optional[dict] = None
     access_grants: Optional[list[dict]] = None
+
+    @field_validator('data', mode='before')
+    @classmethod
+    def sanitize_data(cls, data):
+        return sanitize_note_data(data)
 
 
 class NoteUserResponse(NoteModel):
@@ -272,7 +313,7 @@ class NoteTable:
         db: Optional[AsyncSession] = None,
     ) -> list[NoteModel]:
         async with get_async_db_context(db) as db:
-            user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
+            user_groups = await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
             user_group_ids = [group.id for group in user_groups]
 
             stmt = select(Note).order_by(Note.updated_at.desc())
@@ -295,6 +336,27 @@ class NoteTable:
             note = result.scalars().first()
             return await self._to_note_model(note, db=db) if note else None
 
+    async def get_note_ids_by_file_id(self, file_id: str, owner_id: str, db: AsyncSession | None = None) -> list[str]:
+        """Find current file attachments in notes owned by the file owner."""
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(Note.id, Note.data).filter(
+                    Note.user_id == owner_id,
+                    cast(Note.data, Text).like(f'%{file_id}%'),
+                )
+            )
+            # The text filter only narrows candidates; authorization needs an exact attachment.
+            return [
+                note_id
+                for note_id, data in result.all()
+                if isinstance(data, dict)
+                and isinstance(data.get('files'), list)
+                and any(
+                    isinstance(item, dict) and item.get('type') == 'file' and item.get('id') == file_id
+                    for item in data['files']
+                )
+            ]
+
     async def update_note_by_id(
         self, id: str, form_data: NoteUpdateForm, db: Optional[AsyncSession] = None
     ) -> Optional[NoteModel]:
@@ -305,6 +367,7 @@ class NoteTable:
                 return None
 
             form_data = form_data.model_dump(exclude_unset=True)
+            note.data = sanitize_note_data(note.data) or {}
 
             if 'title' in form_data:
                 note.title = form_data['title']
@@ -358,7 +421,7 @@ class NoteTable:
         db: Optional[AsyncSession] = None,
     ) -> list[NoteModel]:
         async with get_async_db_context(db) as db:
-            user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
+            user_groups = await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
             user_group_ids = [group.id for group in user_groups]
 
             stmt = (

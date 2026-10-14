@@ -7,11 +7,18 @@
 
 	import { deleteGroupById, updateGroupById } from '$lib/apis/groups';
 
+	/** @type {import('../Groups.svelte').GroupListItem[]} */
+	export let groups = [];
+	export let draggable = false;
+	/** @type {(event: DragEvent) => void} */
+	export let onDragStart = () => {};
+	export let onDragEnd = () => {};
 	import EditGroupModal from './EditGroupModal.svelte';
 
 	export let group = {
 		id: '',
 		name: 'Admins',
+		path: 'Admins',
 		description: '',
 		permissions: {},
 		user_ids: [1, 2, 3],
@@ -20,10 +27,13 @@
 	export let defaultPermissions = {};
 
 	export let setGroups = () => {};
+	/** @type {(group: any) => void} */
+	export let updateGroup = () => {};
 
 	let showEdit = false;
 	$: hasCustomPermissions = Object.keys(group?.permissions ?? {}).length > 0;
 
+	/** @param {any} _group */
 	const updateHandler = async (_group) => {
 		const res = await updateGroupById(localStorage.token, group.id, _group).catch((error) => {
 			toast.error(`${error}`);
@@ -32,8 +42,9 @@
 
 		if (res) {
 			toast.success($i18n.t('Group updated successfully'));
-			setGroups();
+			await setGroups();
 		}
+		return !!res;
 	};
 
 	const deleteHandler = async () => {
@@ -44,8 +55,9 @@
 
 		if (res) {
 			toast.success($i18n.t('Group deleted successfully'));
-			setGroups();
+			await setGroups();
 		}
+		return !!res;
 	};
 
 	onMount(() => {
@@ -60,22 +72,28 @@
 	bind:show={showEdit}
 	edit
 	{group}
+	{groups}
 	{defaultPermissions}
 	tabs={['general', 'permissions', 'users', 'preview']}
 	onSubmit={updateHandler}
 	onDelete={deleteHandler}
+	onMemberChange={updateGroup}
 />
 
 <button
-	class="group flex cursor-pointer text-left w-full px-2.5 py-2"
+	class="group flex cursor-pointer text-left w-full px-1.5 py-1.5"
+	{draggable}
+	on:dragstart={onDragStart}
+	on:dragend={onDragEnd}
+	title={group.path}
 	on:click={() => {
 		showEdit = true;
 	}}
 >
-	<div class="w-full">
+	<div class="min-w-0 w-full">
 		<div class="flex items-center gap-3">
-			<div class="flex min-w-0 flex-1 flex-col gap-0.5 pl-1">
-				<div class="flex min-w-0 items-center gap-2">
+			<div class="flex min-w-0 flex-1 items-center gap-3 pl-1">
+				<div class="flex min-w-0 items-center gap-2 sm:shrink-0 sm:max-w-[55%]">
 					<div
 						class="text-sm font-normal line-clamp-1 text-gray-900 group-hover:underline dark:text-gray-100"
 					>
@@ -83,13 +101,14 @@
 					</div>
 
 					<div
-						class="shrink-0 rounded-md bg-gray-500/10 px-1.5 py-0.5 text-[11px] font-normal leading-none text-gray-600 dark:text-gray-300"
+						class="shrink-0 rounded-md bg-gray-500/10 px-1.5 py-0.5 text-[0.6875rem] font-normal leading-none text-gray-600 dark:text-gray-300"
 					>
-						{$i18n.t('{{COUNT}} members', { COUNT: group?.member_count ?? 0 })}
+						<!-- {$i18n.t('{{COUNT}} members', { COUNT: group?.member_count ?? 0 })} -->
+						{$i18n.t('{{COUNT}} direct members', { COUNT: group?.member_count ?? 0 })}
 					</div>
 				</div>
 
-				<div class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500">
+				<div class="hidden min-w-0 items-center gap-1.5 text-xs text-gray-500 sm:flex">
 					<div class="line-clamp-1 min-w-0">
 						{#if group?.description}
 							{group.description}

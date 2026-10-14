@@ -76,7 +76,7 @@
 		</div>
 
 		<!-- Form -->
-		<div class="px-5 pb-2 flex flex-col gap-3">
+		<div class="px-4 pb-2 flex flex-col gap-3">
 			<!-- Name -->
 			<div>
 				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Name')}</div>
@@ -131,16 +131,14 @@
 				{$i18n.t('Cancel')}
 			</button>
 			<button
-				class="px-3.5 py-1.5 text-sm bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 {loading
-					? 'cursor-not-allowed'
-					: ''}"
+				class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 				on:click={submitHandler}
 				type="button"
 				disabled={loading}
 			>
 				{$i18n.t('Create')}
 				{#if loading}
-					<span class="shrink-0"><Spinner /></span>
+					<span class="shrink-0"><Spinner className="size-3" /></span>
 				{/if}
 			</button>
 		</div>

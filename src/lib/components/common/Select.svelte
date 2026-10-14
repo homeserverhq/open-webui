@@ -22,14 +22,14 @@
 	export let labelClass = '';
 
 	/** CSS classes for the dropdown content container */
-	export let contentClass = 'min-w-[170px]';
+	export let contentClass = 'min-w-[10.625rem]';
 
 	/** Max height for the dropdown content */
 	export let maxHeight = '18rem';
 
 	/** CSS classes for each item button */
 	export let itemClass =
-		'flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[13px] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100';
+		'flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100';
 
 	/** Alignment of the dropdown: 'start' | 'end' */
 	export let align = 'start';
@@ -66,7 +66,19 @@
 		contentEl.style.position = 'fixed';
 		contentEl.style.zIndex = '9999';
 		contentEl.style.minWidth = `${rect.width}px`;
-		if (side === 'top') {
+
+		const contentHeight = contentEl.offsetHeight || 0;
+		const spaceBelow = window.innerHeight - rect.bottom - 4;
+		const spaceAbove = rect.top - 4;
+
+		let openAbove = side === 'top';
+		if (side === 'bottom' && spaceBelow < contentHeight && spaceAbove > spaceBelow) {
+			openAbove = true;
+		} else if (side === 'top' && spaceAbove < contentHeight && spaceBelow > spaceAbove) {
+			openAbove = false;
+		}
+
+		if (openAbove) {
 			contentEl.style.bottom = `${window.innerHeight - rect.top + 4}px`;
 			contentEl.style.top = 'auto';
 		} else {
@@ -74,11 +86,21 @@
 			contentEl.style.bottom = 'auto';
 		}
 
+		const contentWidth = contentEl.offsetWidth || 0;
+
 		if (align === 'end') {
-			contentEl.style.right = `${window.innerWidth - rect.right}px`;
+			let right = window.innerWidth - rect.right;
+			if (right + contentWidth > window.innerWidth) {
+				right = window.innerWidth - contentWidth - 16;
+			}
+			contentEl.style.right = `${Math.max(16, right)}px`;
 			contentEl.style.left = 'auto';
 		} else {
-			contentEl.style.left = `${rect.left}px`;
+			let left = rect.left;
+			if (left + contentWidth + 16 > window.innerWidth) {
+				left = window.innerWidth - contentWidth - 16;
+			}
+			contentEl.style.left = `${Math.max(16, left)}px`;
 			contentEl.style.right = 'auto';
 		}
 	}
@@ -122,7 +144,7 @@
 
 <button
 	bind:this={triggerEl}
-	class={triggerClass}
+	class="focus-ring {triggerClass}"
 	type="button"
 	aria-expanded={open}
 	on:click={toggleOpen}
@@ -139,7 +161,7 @@
 		<DropdownMenu className={contentClass} style={`max-height: ${maxHeight}; overflow-y: auto;`}>
 			<slot {open} {selectItem}>
 				{#each items as item}
-					<button class={itemClass} type="button" on:click={() => selectItem(item)}>
+					<button class="focus-ring {itemClass}" type="button" on:click={() => selectItem(item)}>
 						<slot name="item" {item} selected={value === item.value}>
 							{item.label}
 						</slot>

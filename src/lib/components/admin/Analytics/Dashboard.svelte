@@ -18,6 +18,7 @@
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { formatNumber } from '$lib/utils';
 	import { goto } from '$app/navigation';
+	import type { Instance } from 'tippy.js';
 
 	const i18n = getContext('i18n');
 
@@ -83,6 +84,7 @@
 		{ input_tokens: number; output_tokens: number; total_tokens: number }
 	> = {};
 	let totalTokens = { input: 0, output: 0, total: 0 };
+	let tokenTooltip: Instance | null = null;
 
 	let loading = true;
 
@@ -162,7 +164,9 @@
 
 	// Reload when the period, group, or custom range changes.
 	// In custom mode, wait until both dates are set to avoid a half-specified query.
-	$: if (selectedPeriod === 'custom' ? customStart && customEnd : selectedPeriod) {
+	$: if (selectedPeriod === 'custom' && !(customStart && customEnd)) {
+		loading = false;
+	} else if (selectedPeriod) {
 		// reference customStart/customEnd so this block reruns when they change
 		customStart;
 		customEnd;
@@ -230,6 +234,12 @@
 	}
 </script>
 
+<svelte:window
+	on:keydown={(event) => {
+		if (event.key === 'Escape') tokenTooltip?.hide();
+	}}
+/>
+
 <div class="flex items-center justify-between mb-2 gap-2">
 	<h2 class="text-sm font-medium text-gray-900 dark:text-white shrink-0">
 		{$i18n.t('Analytics')}
@@ -289,8 +299,25 @@
 			>
 			{$i18n.t('messages')}</span
 		>
-		<Tooltip content={$i18n.t('Token counts are estimates and may not reflect actual API usage')}>
-			<span class="cursor-help"
+		<Tooltip
+			as="button"
+			className="whitespace-nowrap rounded-sm cursor-pointer hover:underline decoration-dotted underline-offset-4 focus-visible:outline focus-visible:outline-offset-2"
+			placement="bottom"
+			interactive
+			tippyOptions={{
+				trigger: 'mouseenter focus click',
+				appendTo: () => document.body,
+				aria: { content: 'describedby', expanded: true },
+				onCreate: (instance) => (tokenTooltip = instance),
+				onDestroy: () => (tokenTooltip = null)
+			}}
+			content={`<div class="p-1 text-left">
+				<div class="flex justify-between gap-6"><span>${$i18n.t('Input')}</span><span class="tabular-nums">${totalTokens.input.toLocaleString()}</span></div>
+				<div class="flex justify-between gap-6 mt-1"><span>${$i18n.t('Output')}</span><span class="tabular-nums">${totalTokens.output.toLocaleString()}</span></div>
+				<div class="mt-2 max-w-56 text-gray-400">${$i18n.t('Token counts are estimates and may not reflect actual API usage')}</div>
+			</div>`}
+		>
+			<span
 				><span class="font-normal text-gray-900 dark:text-gray-300"
 					>{formatNumber(totalTokens.total)}</span
 				>
@@ -482,10 +509,13 @@
 											alt={model.name}
 											class="size-5 rounded-full object-cover shrink-0"
 											on:error={(e) => {
+												// LICENSE covers this Open WebUI fallback logo.
+												// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+												// https://docs.openwebui.com/license.
 												e.target.src = '/favicon.png';
 											}}
 										/>
-										<span class="truncate max-w-[150px]">{model.name}</span>
+										<span class="truncate max-w-[9.375rem]">{model.name}</span>
 									</div>
 								</td>
 								<td class="px-3 py-1 text-right">{model.count.toLocaleString()}</td>
@@ -593,7 +623,7 @@
 												e.target.src = '/user.png';
 											}}
 										/>
-										<span class="truncate max-w-[150px]"
+										<span class="truncate max-w-[9.375rem]"
 											>{user.name || user.email || user.user_id.substring(0, 8)}</span
 										>
 									</div>

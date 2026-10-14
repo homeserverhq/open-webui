@@ -1,4 +1,6 @@
 <script lang="ts">
+	import WorkspaceAccessModal from './common/WorkspaceAccessModal.svelte';
+	let accessModal: WorkspaceAccessModal;
 	import dayjs from 'dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
 	dayjs.extend(relativeTime);
@@ -10,7 +12,7 @@
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
-	import { WEBUI_NAME, user, workspaceActions } from '$lib/stores';
+	import { WEBUI_NAME, user, workspaceActions, workspaceCounts } from '$lib/stores';
 	import {
 		deleteKnowledgeById,
 		searchKnowledgeBases,
@@ -62,6 +64,7 @@
 	let page = 1;
 	let query = '';
 	let searchDebounceTimer: ReturnType<typeof setTimeout>;
+	let searchController: AbortController;
 	let viewOption = '';
 	let sourceOption = '';
 	let sortKey = 'updated_at';
@@ -86,6 +89,8 @@
 	}
 
 	const handleSearchInput = () => {
+		searchController?.abort();
+		itemsLoading = true;
 		clearTimeout(searchDebounceTimer);
 		searchDebounceTimer = setTimeout(() => {
 			init();
@@ -93,6 +98,7 @@
 	};
 
 	onDestroy(() => {
+		searchController?.abort();
 		clearTimeout(searchDebounceTimer);
 	});
 
@@ -137,6 +143,11 @@
 	};
 
 	const getItemsPage = async () => {
+		clearTimeout(searchDebounceTimer);
+		searchController?.abort();
+		searchController = new AbortController();
+		const { signal } = searchController;
+
 		itemsLoading = true;
 		const res = await searchKnowledgeBases(
 			localStorage.token,
@@ -145,14 +156,18 @@
 			page,
 			sourceOption,
 			sortKey,
-			sortDirection
+			sortDirection,
+			signal
 		).catch(() => {
 			return [];
 		});
 
+		if (signal.aborted) return;
+
 		if (res) {
 			console.log(res);
 			total = res.total;
+			workspaceCounts.update((counts) => ({ ...counts, knowledge: total }));
 			const pageItems: KnowledgeListItem[] = res.items ?? [];
 
 			if ((pageItems ?? []).length === 0) {
@@ -271,6 +286,11 @@
 		viewOption = localStorage?.workspaceViewOption || '';
 		sourceOption = localStorage?.workspaceKnowledgeSourceOption || '';
 		loaded = true;
+		await tick();
+
+		if (items === null && !itemsLoading) {
+			await init();
+		}
 
 		if (showCreateOnMount) {
 			showCreateModal = true;
@@ -278,7 +298,12 @@
 	});
 </script>
 
+<WorkspaceAccessModal bind:this={accessModal} resourceType="knowledge" onUpdated={init} />
+
 <svelte:head>
+	<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
 	<title>
 		{$i18n.t('Knowledge')} / {$WEBUI_NAME}
 	</title>
@@ -438,7 +463,7 @@
 													placement="top-start"
 												>
 													<div
-														class="truncate text-[13px] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
+														class="truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
 													>
 														{item.name}
 													</div>
@@ -456,11 +481,17 @@
 													<Badge type="muted" content={$i18n.t('Read Only')} />
 												{/if}
 
-												<Tooltip content={dayjs(item.updated_at * 1000).format('LLLL')}>
+												<Tooltip
+													content={dayjs(item.updated_at * 1000)
+														.locale($i18n.language)
+														.format('LLLL')}
+												>
 													<div
-														class="shrink-0 truncate text-[11px] leading-5 text-gray-400 dark:text-gray-600"
+														class="shrink-0 truncate text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600"
 													>
-														{dayjs(item.updated_at * 1000).fromNow()}
+														{dayjs(item.updated_at * 1000)
+															.locale($i18n.language)
+															.fromNow()}
 													</div>
 												</Tooltip>
 											</div>
@@ -479,7 +510,7 @@
 								</div>
 
 								<div
-									class="hidden max-w-44 shrink-0 self-center truncate text-right text-[11px] leading-5 text-gray-500 dark:text-gray-500 md:block"
+									class="hidden max-w-44 shrink-0 self-center truncate text-right text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500 md:block"
 								>
 									<Tooltip
 										content={item?.user?.email ?? $i18n.t('Deleted User')}
@@ -497,6 +528,7 @@
 								{#if item?.write_access || $user?.role === 'admin'}
 									<div class="ml-2 flex shrink-0 flex-row items-center self-center">
 										<ItemMenu
+											accessHandler={() => accessModal.open(item.id)}
 											onExport={$user?.role === 'admin'
 												? () => {
 														exportHandler(item);

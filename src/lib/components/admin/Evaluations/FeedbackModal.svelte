@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Modal from '$lib/components/common/Modal.svelte';
 	import { getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import { getFeedbackById } from '$lib/apis/evaluations';
 	import { toast } from 'svelte-sonner';
@@ -49,7 +49,7 @@
 				<button
 					class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
 					on:click={close}
-					aria-label="Close"
+					aria-label={$i18n.t('Close')}
 				>
 					<XMark className={'size-4'} />
 				</button>
@@ -125,7 +125,8 @@
 							<div class="mb-2 -mx-1">
 								<div class="flex flex-wrap gap-1 mt-1">
 									{#each selectedFeedback?.data?.tags as tag}
-										<span class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850 text-[9px]"
+										<span
+											class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850 text-[0.5625rem]"
 											>{tag}</span
 										>
 									{/each}
@@ -135,7 +136,7 @@
 
 						<div class="flex justify-end pt-2">
 							<button
-								class="px-3.5 py-1.5 text-sm font-normal bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full"
+								class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
 								type="button"
 								on:click={close}
 							>

@@ -8,7 +8,7 @@
 	dayjs.extend(relativeTime);
 
 	import { onMount, getContext } from 'svelte';
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	import {
 		deleteFeedbackById,
@@ -125,6 +125,9 @@
 	};
 
 	const shareHandler = async () => {
+		// LICENSE covers this Open WebUI Community wordmark.
+		// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		// https://docs.openwebui.com/license.
 		toast.success($i18n.t('Redirecting you to Open WebUI Community'));
 
 		// remove snapshot from feedbacks
@@ -157,7 +160,7 @@
 			return {
 				id: rest.id,
 				user_id: rest.user_id,
-				chat_id: data?.chat_id ?? '',
+				chat_id: rest.meta?.chat_id ?? '',
 				model_id: data?.model_id ?? '',
 				sibling_model_ids: (data?.sibling_model_ids ?? []).join(';'),
 				rating: data?.rating ?? '',
@@ -240,7 +243,7 @@
 									...modelIds.map((mid) => ({ value: mid, label: mid }))
 								]}
 								placeholder={$i18n.t('All')}
-								triggerClass="relative w-full flex items-center gap-0.5 px-2.5 py-1.5 bg-transparent rounded-xl text-[13px] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100"
+								triggerClass="relative w-full flex items-center gap-0.5 px-2.5 py-1.5 bg-transparent rounded-xl text-[0.8125rem] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100"
 								onChange={() => {
 									page = 1;
 									getFeedbacks();
@@ -276,9 +279,9 @@
 						</button>
 
 						<div slot="content">
-							<DropdownMenu className="w-[170px]">
+							<DropdownMenu className="min-w-[10.625rem]">
 								<button
-									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
+									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
 									type="button"
 									on:click={() => exportHandler('json')}
 								>
@@ -286,7 +289,7 @@
 								</button>
 
 								<button
-									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
+									class="select-none flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl"
 									type="button"
 									on:click={() => exportHandler('csv')}
 								>
@@ -301,11 +304,10 @@
 
 		<div class="scrollbar-hidden relative whitespace-nowrap overflow-x-auto max-w-full">
 			{#if (items ?? []).length === 0}
-				<div class="w-full h-full flex flex-col justify-center items-center my-16 mb-24">
-					<div class="max-w-md text-center">
-						<div class="text-3xl mb-3">😕</div>
-						<div class="text-lg font-normal mb-1">{$i18n.t('No feedback found')}</div>
-						<div class="text-gray-500 text-center text-xs">
+				<div class="flex w-full flex-col items-center justify-center py-16 pb-24">
+					<div class="max-w-sm text-center text-gray-900 dark:text-gray-100">
+						<div class="mb-1.5 text-sm">{$i18n.t('No feedback found')}</div>
+						<div class="text-center text-xs leading-5 text-gray-500">
 							{$i18n.t('Try adjusting your search or filter to find what you are looking for.')}
 						</div>
 					</div>
@@ -319,11 +321,11 @@
 							<th
 								scope="col"
 								class="px-2.5 py-2 font-normal cursor-pointer select-none w-3"
-								on:click={() => setSortKey('user')}
+								on:click={() => setSortKey('username')}
 							>
 								<div class="flex gap-1.5 items-center justify-end">
 									{$i18n.t('User')}
-									{#if orderBy === 'user'}
+									{#if orderBy === 'username'}
 										<span class="font-normal">
 											{#if direction === 'asc'}
 												<ChevronUp className="size-2" />
@@ -490,7 +492,9 @@
 								{/if}
 
 								<td class=" px-3 py-1 text-right font-normal">
-									{dayjs(feedback.updated_at * 1000).fromNow()}
+									{dayjs(feedback.updated_at * 1000)
+										.locale($i18n.language)
+										.fromNow()}
 								</td>
 
 								<td class=" px-3 py-1 text-right font-normal" on:click={(e) => e.stopPropagation()}>

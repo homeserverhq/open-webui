@@ -19,6 +19,8 @@
 	marked.use(footnoteExtension(options));
 	marked.use(colonFenceExtension(options));
 	marked.use(disableSingleTilde);
+	// Also set by RichTextInput, but messages can render before any input mounts.
+	marked.use({ breaks: true });
 	marked.use({
 		extensions: [
 			mentionExtension({ triggerChar: '@' }),
@@ -36,6 +38,8 @@
 	import MarkdownTokens from './Markdown/MarkdownTokens.svelte';
 
 	export let id = '';
+	export let chatId = '';
+	export let messageId = '';
 	export let content;
 	export let done = true;
 	export let model = null;
@@ -46,7 +50,7 @@
 	export let paragraphTag = 'p';
 	export let editCodeBlock = true;
 	export let topPadding = false;
-	export let allowEmbeds = true;
+	export let allowEmbeds = false;
 
 	export let sourceIds = [];
 
@@ -57,6 +61,7 @@
 
 	export let onSourceClick = () => {};
 	export let onTaskClick = () => {};
+	export let onToolCallResolved = () => {};
 
 	let tokens = [];
 	let pendingUpdate = null;
@@ -101,6 +106,8 @@
 	<MarkdownTokens
 		{tokens}
 		{id}
+		{chatId}
+		{messageId}
 		{done}
 		{save}
 		{preview}
@@ -112,6 +119,7 @@
 		{allowEmbeds}
 		{onTaskClick}
 		{onSourceClick}
+		{onToolCallResolved}
 		{onSave}
 		{onUpdate}
 		{onPreview}

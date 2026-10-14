@@ -31,9 +31,9 @@
 	</Tooltip>
 
 	<div slot="content">
-		<DropdownMenu className="min-w-[190px]">
+		<DropdownMenu className="min-w-[11.875rem]">
 			<button
-				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 				on:click={async () => {
 					createHandler();
 					show = false;
@@ -46,7 +46,7 @@
 			</button>
 
 			<button
-				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+				class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
 				on:click={async () => {
 					importFromLinkHandler();
 					show = false;
@@ -55,7 +55,7 @@
 				<div class="self-center">
 					<Link className="size-3.5" />
 				</div>
-				<div class=" self-center truncate">{$i18n.t('Import From Link')}</div>
+				<div class=" self-center truncate">{$i18n.t('Import from URL')}</div>
 			</button>
 		</DropdownMenu>
 	</div>

@@ -6,17 +6,17 @@
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Select from '$lib/components/common/Select.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
 	export let value = '';
-	export let placeholder = $i18n.t('Tag');
+	export let placeholder: string | undefined = undefined;
 	export let align = 'start';
 	export let onChange: (value: string) => void = () => {};
 	export let triggerClass =
-		'relative h-8 w-full flex items-center gap-0.5 px-1.5 py-1.5 bg-transparent rounded-xl text-[13px] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100';
+		'relative h-8 w-full flex items-center gap-0.5 px-1.5 py-1.5 bg-transparent rounded-xl text-[0.8125rem] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100';
 	export let itemClass =
-		'flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[13px] capitalize hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100';
-	export let contentClass = 'min-w-[170px]';
+		'flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] capitalize hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100';
+	export let contentClass = 'min-w-[10.625rem]';
 
 	export let items = [];
 </script>
@@ -24,7 +24,7 @@
 <Select
 	bind:value
 	{items}
-	{placeholder}
+	placeholder={placeholder ?? $i18n.t('Tag')}
 	{align}
 	{triggerClass}
 	{itemClass}
@@ -38,7 +38,7 @@
 			{#if value}
 				{selectedLabel}
 			{:else}
-				{placeholder}
+				{placeholder ?? $i18n.t('Tag')}
 			{/if}
 		</div>
 

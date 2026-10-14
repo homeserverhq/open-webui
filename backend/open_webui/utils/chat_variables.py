@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
+from open_webui.utils.json_codec import JSONCodec
 
 CHAT_VARIABLE_KEY_RE = re.compile(r'^[a-z][a-z0-9_]*$')
 CHAT_VARIABLE_ANY_RE = re.compile(r'{{\s*chat\.variables\.([^\s|}]+)(?:\s*\|\s*([^}]*))?\s*}}')
 USER_VARIABLE_ANY_RE = re.compile(r'{{\s*user\.variables\.([^\s|}]+)(?:\s*\|\s*([^}]*))?\s*}}')
 MAX_VARIABLE_VALUE_LENGTH = 20_000
 MAX_VARIABLES_JSON_LENGTH = 100_000
+MAX_JSON_VALUE_DEPTH = 32
 
 
 class ChatVariablesError(ValueError):
@@ -58,15 +59,27 @@ def split_properties(value: str, delimiter: str) -> list[str]:
     return result
 
 
+def is_nested_too_deep(value: Any) -> bool:
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, list):
+            if depth > MAX_JSON_VALUE_DEPTH:
+                return True
+            stack.extend((child, depth + 1) for child in item)
+    return False
+
+
 def parse_json_value(value: str) -> Any:
     if value.startswith('"') and value.endswith('"'):
         return value[1:-1]
 
     if re.match(r'^[\[{]', value):
         try:
-            return json.loads(value)
-        except json.JSONDecodeError:
+            parsed = JSONCodec.loads(value)
+        except (JSONCodec.JSONDecodeError, RecursionError):
             return value
+        return value if is_nested_too_deep(parsed) else parsed
 
     return value
 
@@ -112,7 +125,7 @@ def _safe_field(key: str, definition: dict[str, Any]) -> dict[str, Any]:
         'type',
     }
     field = {'key': key}
-    for field_key in allowed_keys:
+    for field_key in sorted(allowed_keys):
         if field_key in definition:
             field[field_key] = definition[field_key]
 
@@ -185,7 +198,7 @@ def validate_user_variables(variables: Any) -> dict[str, str]:
         raise ChatVariablesError('User variables must be an object.')
 
     try:
-        if len(json.dumps(variables)) > MAX_VARIABLES_JSON_LENGTH:
+        if len(JSONCodec.dumps(variables, ensure_ascii=False)) > MAX_VARIABLES_JSON_LENGTH:
             raise ChatVariablesError('User variables are too large.')
     except TypeError:
         raise ChatVariablesError('User variables must be JSON serializable.')
@@ -214,7 +227,7 @@ def validate_chat_variables(
     variables = normalize_chat_variables(variables)
 
     try:
-        if len(json.dumps(variables)) > MAX_VARIABLES_JSON_LENGTH:
+        if len(JSONCodec.dumps(variables, ensure_ascii=False)) > MAX_VARIABLES_JSON_LENGTH:
             raise ChatVariablesError('Chat variables are too large.')
     except TypeError:
         raise ChatVariablesError('Chat variables must be JSON serializable.')

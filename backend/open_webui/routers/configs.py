@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import copy
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request
 from mcp.shared.auth import OAuthMetadata
 from open_webui.config import BannerModel
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, AIOHTTP_CLIENT_TIMEOUT, ENABLE_TOOL_SERVERS
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.oauth_sessions import OAuthSessions
 from open_webui.utils.auth import get_admin_user, get_verified_user
-from open_webui.utils.headers import get_custom_headers
+from open_webui.utils.headers import bearer_auth_header, get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.oauth import (
     OAuthClientInformationFull,
@@ -23,11 +22,10 @@ from open_webui.utils.oauth import (
     get_discovery_urls,
     get_oauth_client_info_with_dynamic_client_registration,
     get_oauth_client_info_with_static_credentials,
-    recover_static_oauth_client_metadata,
+    recover_oauth_client_metadata,
     resolve_oauth_client_info,
 )
 from open_webui.utils.tools import (
-    bearer_auth_header,
     get_tool_server_data,
     get_tool_server_url,
     set_terminal_servers,
@@ -41,6 +39,7 @@ log = logging.getLogger(__name__)
 
 CONNECTIONS_CONFIG_KEYS = {
     'ENABLE_DIRECT_CONNECTIONS': 'direct.enable',
+    'ENABLE_DIRECT_INTEGRATIONS': 'direct.integrations.enable',
     'ENABLE_BASE_MODELS_CACHE': 'models.base_models_cache',
 }
 CODE_EXECUTION_CONFIG_KEYS = {
@@ -100,7 +99,9 @@ class ImportConfigForm(BaseModel):
 
 @router.post('/import', response_model=dict)
 async def import_config(request: Request, form_data: ImportConfigForm, user=Depends(get_admin_user)):
-    await Config.upsert(form_data.config)
+    from open_webui.utils.mfa import update_mfa_config
+
+    await update_mfa_config(request, form_data.config)
     await publish_event(
         request,
         EVENTS.CONFIG_IMPORTED,
@@ -133,6 +134,7 @@ async def get_config_namespace(namespace: str, user=Depends(get_admin_user)):
 
 class ConnectionsConfigForm(BaseModel):
     ENABLE_DIRECT_CONNECTIONS: bool
+    ENABLE_DIRECT_INTEGRATIONS: bool = False
     ENABLE_BASE_MODELS_CACHE: bool
 
 
@@ -147,7 +149,7 @@ async def set_connections_config(
     form_data: ConnectionsConfigForm,
     user=Depends(get_admin_user),
 ):
-    await Config.upsert(config_updates(form_data.model_dump(), CONNECTIONS_CONFIG_KEYS))
+    await Config.upsert(config_updates(form_data.model_dump(exclude_unset=True), CONNECTIONS_CONFIG_KEYS))
     values = await get_config_values(CONNECTIONS_CONFIG_KEYS)
     await publish_event(
         request,
@@ -176,6 +178,9 @@ async def register_oauth_client(
     type: str | None = None,
     user=Depends(get_admin_user),
 ):
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     try:
         oauth_client_id = form_data.client_id
         if type:
@@ -202,7 +207,7 @@ async def register_oauth_client(
             'oauth_client_info': encrypt_data(oauth_client_info.model_dump(mode='json')),
         }
     except Exception as e:
-        log.debug(f'Failed to register OAuth client: {e}')
+        log.debug('Failed to register OAuth client: %s', e)
         raise HTTPException(
             status_code=400,
             detail=f'Failed to register OAuth client: {e}',
@@ -219,6 +224,7 @@ class ToolServerConnection(BaseModel):
     path: str
     type: str | None = 'openapi'  # openapi, mcp
     auth_type: str | None
+    forward_cookies: bool = False
     headers: dict | str | None = None
     key: str | None
     config: dict | None
@@ -263,7 +269,7 @@ async def set_tool_servers_config(
 
     await set_tool_servers(request)
 
-    for connection in connections:
+    for connection in connections if ENABLE_TOOL_SERVERS else []:
         server_type = connection.get('type', 'openapi')
         if server_type == 'mcp':
             server_id = (connection.get('info') or {}).get('id')
@@ -272,14 +278,18 @@ async def set_tool_servers_config(
             if auth_type in ('oauth_2.1', 'oauth_2.1_static') and server_id:
                 try:
                     oauth_client_info = resolve_oauth_client_info(connection)
-                    oauth_client_info = await recover_static_oauth_client_metadata(connection, oauth_client_info)
+                    oauth_client_info = await recover_oauth_client_metadata(connection, oauth_client_info)
                     oauth_client_info = apply_connection_oauth_options(connection, oauth_client_info)
                     request.app.state.oauth_client_manager.add_client(
                         f'{server_type}:{server_id}',
                         OAuthClientInformationFull(**oauth_client_info),
                     )
                 except Exception as e:
-                    log.debug(f'Failed to add OAuth client for MCP tool server: {e}')
+                    log.debug(
+                        'Failed to add OAuth client for MCP tool server %s: %s',
+                        server_id,
+                        f'{type(e).__name__}: {e}' if str(e) else type(e).__name__,
+                    )
                     continue
 
     await publish_event(
@@ -304,6 +314,7 @@ class TerminalServerConnection(BaseModel):
 
     key: str | None = ''
     auth_type: str | None = 'bearer'
+    forward_cookies: bool = False
 
     config: dict | None = None
 
@@ -356,6 +367,9 @@ async def verify_terminal_server_connection(
     Tries GET {url}/api/v1/policies (orchestrator) then GET {url}/api/config
     (plain terminal).  Returns ``{status: true, type: "orchestrator"|"terminal"}``.
     """
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     base_url = (form_data.url or '').rstrip('/')
     if not base_url:
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
@@ -390,7 +404,7 @@ async def verify_terminal_server_connection(
                 pass
 
     except Exception as e:
-        log.debug(f'Failed to connect to the terminal server: {e}')
+        log.debug('Failed to connect to the terminal server: %s', e)
 
     raise HTTPException(status_code=400, detail='Failed to connect to the terminal server')
 
@@ -426,6 +440,9 @@ async def put_terminal_server_policy(
     request: Request, form_data: TerminalServerPolicyForm, user=Depends(get_admin_user)
 ):
     """Proxy a policy read or update to an orchestrator terminal server."""
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     base_url = (form_data.url or '').rstrip('/')
     if not base_url:
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
@@ -454,7 +471,7 @@ async def put_terminal_server_policy(
     except HTTPException:
         raise
     except Exception as e:
-        log.debug(f'Failed to access policy on terminal server: {e}')
+        log.debug('Failed to access policy on terminal server: %s', e)
         raise HTTPException(status_code=400, detail='Failed to access policy on terminal server')
 
 
@@ -463,6 +480,9 @@ async def put_terminal_server_lifecycle(
     request: Request, form_data: TerminalServerLifecycleForm, user=Depends(get_admin_user)
 ):
     """Proxy a lifecycle read or update to an orchestrator terminal server."""
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     base_url = (form_data.url or '').rstrip('/')
     if not base_url:
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
@@ -491,7 +511,7 @@ async def put_terminal_server_lifecycle(
     except HTTPException:
         raise
     except Exception as e:
-        log.debug(f'Failed to access lifecycle on terminal server: {e}')
+        log.debug('Failed to access lifecycle on terminal server: %s', e)
         raise HTTPException(status_code=400, detail='Failed to access lifecycle on terminal server')
 
 
@@ -502,6 +522,9 @@ async def refresh_terminal_server_terminals(
     """
     Proxy a terminal refresh request to an orchestrator terminal server.
     """
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     base_url = (form_data.url or '').rstrip('/')
     if not base_url:
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
@@ -538,7 +561,7 @@ async def refresh_terminal_server_terminals(
     except HTTPException:
         raise
     except Exception as e:
-        log.debug(f'Failed to refresh terminals: {e}')
+        log.debug('Failed to refresh terminals: %s', e)
         raise HTTPException(status_code=400, detail='Failed to refresh terminals')
 
 
@@ -547,6 +570,9 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
     """
     Verify the connection to the tool server.
     """
+    if not ENABLE_TOOL_SERVERS:
+        raise HTTPException(status_code=403, detail='Tool servers are disabled')
+
     try:
         if form_data.type == 'mcp':
             if form_data.auth_type in ('oauth_2.1', 'oauth_2.1_static'):
@@ -557,7 +583,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
                 )
                 discovery_urls = await get_discovery_urls(oauth_server_url)
                 for discovery_url in discovery_urls:
-                    log.debug(f'Trying to fetch OAuth 2.1 discovery document from {discovery_url}')
+                    log.debug('Trying to fetch OAuth 2.1 discovery document from %s', discovery_url)
                     async with aiohttp.ClientSession(
                         trust_env=True,
                         timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT),
@@ -575,7 +601,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
                                         'oauth_server_metadata': oauth_server_metadata.model_dump(mode='json'),
                                     }
                                 except Exception as e:
-                                    log.info(f'Failed to parse OAuth 2.1 discovery document: {e}')
+                                    log.info('Failed to parse OAuth 2.1 discovery document: %s', e)
                                     raise HTTPException(
                                         status_code=400,
                                         detail=f'Failed to parse OAuth 2.1 discovery document from {discovery_url}',
@@ -624,7 +650,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
                         'specs': specs,
                     }
                 except Exception as e:
-                    log.debug(f'Failed to create MCP client: {e}')
+                    log.debug('Failed to create MCP client: %s', e)
                     raise HTTPException(
                         status_code=400,
                         detail=f'Failed to create MCP client',
@@ -667,7 +693,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
     except HTTPException as e:
         raise e
     except Exception as e:
-        log.debug(f'Failed to connect to the tool server: {e}')
+        log.debug('Failed to connect to the tool server: %s', e)
         raise HTTPException(
             status_code=400,
             detail=f'Failed to connect to the tool server',
@@ -728,7 +754,7 @@ async def set_code_execution_config(
 class ModelsConfigForm(BaseModel):
     DEFAULT_MODELS: str | None
     DEFAULT_PINNED_MODELS: str | None
-    MODEL_ORDER_LIST: list[str | None]
+    MODEL_ORDER_LIST: list[str] | None
     DEFAULT_MODEL_METADATA: dict | None = None
     DEFAULT_MODEL_PARAMS: dict | None = None
 
@@ -804,18 +830,25 @@ class PromptSuggestion(BaseModel):
 
 
 class SetDefaultSuggestionsForm(BaseModel):
-    suggestions: list[PromptSuggestion]
+    suggestions: list[PromptSuggestion] | None
+    i18n: dict[str, Any] | None = None
 
 
-@router.post('/suggestions', response_model=list[PromptSuggestion])
+@router.post('/suggestions', response_model=dict)
 async def set_default_suggestions(
     request: Request,
     form_data: SetDefaultSuggestionsForm,
     user=Depends(get_admin_user),
 ):
     data = form_data.model_dump()
-    await Config.upsert({'ui.prompt_suggestions': data['suggestions']})
+    await Config.upsert(
+        {
+            'ui.prompt_suggestions': data['suggestions'],
+            'ui.prompt_suggestions_i18n': data.get('i18n') or {},
+        }
+    )
     suggestions = await Config.get('ui.prompt_suggestions')
+    suggestions_i18n = await Config.get('ui.prompt_suggestions_i18n')
     await publish_event(
         request,
         EVENTS.CONFIG_SUGGESTIONS_UPDATED,
@@ -824,7 +857,7 @@ async def set_default_suggestions(
         subject_type='config',
         data={'count': len(suggestions or [])},
     )
-    return suggestions
+    return {'suggestions': suggestions, 'i18n': suggestions_i18n}
 
 
 ############################

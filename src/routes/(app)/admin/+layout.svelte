@@ -16,7 +16,7 @@
 		if ($user?.role !== 'admin') {
 			await goto('/', { replaceState: true });
 		} else if (
-			!$config?.features?.enable_plugins &&
+			!$config?.features?.enable_functions &&
 			$page.url.pathname.includes('/admin/functions')
 		) {
 			await goto('/admin', { replaceState: true });
@@ -26,6 +26,9 @@
 </script>
 
 <svelte:head>
+	<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
 	<title>
 		{$i18n.t('Admin Panel')} / {$WEBUI_NAME}
 	</title>
@@ -81,7 +84,7 @@
 							href="/admin/evaluations">{$i18n.t('Evaluations')}</a
 						>
 
-						{#if $config?.features?.enable_plugins}
+						{#if $config?.features?.enable_functions}
 							<a
 								draggable="false"
 								class="min-w-fit px-1 text-sm {$page.url.pathname.includes('/admin/functions')

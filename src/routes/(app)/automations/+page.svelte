@@ -1,12 +1,14 @@
 <script lang="ts">
+	import { formatSchedule } from '$lib/utils/schedule';
 	import { onMount, onDestroy, getContext } from 'svelte';
 
 	import dayjs from '$lib/dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
 	import { toast } from 'svelte-sonner';
 	import { goto } from '$app/navigation';
-	import { WEBUI_NAME, user, config, folders } from '$lib/stores';
+	import { WEBUI_NAME, user, config, channels, folders } from '$lib/stores';
 	import { getFolders } from '$lib/apis/folders';
+	import { getChannels } from '$lib/apis/channels';
 
 	import {
 		createAutomation,
@@ -32,6 +34,7 @@
 	import Search from '$lib/components/icons/Search.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import EllipsisHorizontal from '$lib/components/icons/EllipsisHorizontal.svelte';
+	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Select from '$lib/components/common/Select.svelte';
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
@@ -56,6 +59,7 @@
 	let cloneFrom: AutomationResponse | null = null;
 
 	let showDeleteConfirm = false;
+	let shiftKey = false;
 	let deleteTarget: AutomationResponse | null = null;
 	let openAutomationMenuId: string | null = null;
 
@@ -67,6 +71,7 @@
 	let importFiles: FileList | null = null;
 	let automationsImportInputElement: HTMLInputElement;
 	let foldersLoaded = false;
+	let channelsLoaded = false;
 
 	const syncHeader = () => {
 		automationsLayout?.setHeader({
@@ -96,6 +101,8 @@
 			}
 		});
 	};
+
+	$: if (loaded && $i18n) syncHeader();
 
 	const handleSearchInput = () => {
 		if (!loaded) return;
@@ -151,6 +158,13 @@
 		foldersLoaded = true;
 	};
 
+	const ensureChannels = async () => {
+		if (channelsLoaded || ($channels ?? []).length > 0) return;
+		const res = await getChannels(localStorage.token).catch(() => null);
+		if (res) channels.set(res);
+		channelsLoaded = true;
+	};
+
 	const toggleHandler = async (automation: AutomationResponse) => {
 		const res = await toggleAutomationById(localStorage.token, automation.id).catch((err) => {
 			toast.error(`${err}`);
@@ -162,19 +176,21 @@
 	};
 
 	const bulkToggleHandler = async (enable: boolean) => {
-		const targets = (automations ?? []).filter((a) => a.is_active !== enable);
-		if (targets.length === 0) return;
+		const allAutomations = await getAllAutomations(query, statusFilter).catch((err) => {
+			toast.error(`${err}`);
+			return null;
+		});
+		if (!allAutomations) return;
 
-		// Optimistic UI update via map for proper Svelte reactivity
-		automations = (automations ?? []).map((a) =>
-			targets.some((t) => t.id === a.id) ? { ...a, is_active: enable } : a
-		);
+		const targets = allAutomations.filter((a) => a.is_active !== enable);
+		if (targets.length === 0) return;
 
 		try {
 			await Promise.all(targets.map((a) => toggleAutomationById(localStorage.token, a.id)));
+			if (statusFilter !== 'all') page = 1;
+			await getAutomationList();
 		} catch (err) {
 			toast.error(`${err}`);
-			// Refresh from server to restore consistent state
 			await getAutomationList();
 		}
 	};
@@ -212,17 +228,29 @@
 
 	const formatLastRun = (automation: AutomationResponse): string => {
 		return automation.last_run_at
-			? dayjs(automation.last_run_at / 1000000).fromNow()
+			? dayjs(automation.last_run_at / 1000000)
+					.locale($i18n.language)
+					.fromNow()
 			: $i18n.t('Never');
 	};
 
-	const getAllAutomations = async () => {
+	const formatDestination = (automation: AutomationResponse): string => {
+		if (automation.data.target?.type === 'channel') {
+			const channel = ($channels ?? []).find(
+				(channel) => channel.id === automation.data.target?.channel_id
+			);
+			return channel?.name ? `#${channel.name}` : $i18n.t('Channel');
+		}
+		return automation.folder_id ? $i18n.t('Folder') : $i18n.t('New chat');
+	};
+
+	const getAllAutomations = async (query: string | null = null, status = 'all') => {
 		let currentPage = 1;
 		let allAutomations: AutomationResponse[] = [];
 		let totalAutomations = 0;
 
 		do {
-			const res = await getAutomationItems(localStorage.token, null, 'all', currentPage);
+			const res = await getAutomationItems(localStorage.token, query, status, currentPage);
 			const pageItems = res?.items ?? [];
 			totalAutomations = res?.total ?? pageItems.length;
 			allAutomations = [...allAutomations, ...pageItems];
@@ -284,52 +312,6 @@
 		await getAutomationList();
 	};
 
-	const formatRRule = (rrule: string): string => {
-		// Detect one-time schedule (ONCE)
-		if (rrule.includes('COUNT=1')) {
-			const match = rrule.match(/DTSTART:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
-			if (match) {
-				const d = new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}`);
-				return `Once · ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-			}
-			return 'Once';
-		}
-		const parts: Record<string, string> = {};
-		rrule
-			.replace('RRULE:', '')
-			.split(';')
-			.forEach((p) => {
-				const [k, v] = p.split('=');
-				if (k && v) parts[k] = v;
-			});
-		const freq = parts.FREQ || '';
-		const hour = parseInt(parts.BYHOUR || '0');
-		const min = (parts.BYMINUTE || '0').padStart(2, '0');
-		const iv = parseInt(parts.INTERVAL || '1');
-		const ampm = hour >= 12 ? 'PM' : 'AM';
-		const h12 = hour % 12 || 12;
-		const time = `${h12}:${min} ${ampm}`;
-
-		if (freq === 'MINUTELY') return iv === 1 ? 'Every minute' : `Every ${iv} minutes`;
-		if (freq === 'HOURLY') return iv === 1 ? 'Hourly' : `Every ${iv} hours`;
-		if (freq === 'DAILY') return `Daily at ${time}`;
-		if (freq === 'WEEKLY') {
-			const days = parts.BYDAY || '';
-			return days ? `${days} at ${time}` : `Weekly at ${time}`;
-		}
-		if (freq === 'MONTHLY')
-			return `Monthly on the ${parts.BYMONTHDAY || '1'}${ordinal(parts.BYMONTHDAY || '1')} at ${time}`;
-		return rrule;
-	};
-
-	const ordinal = (n: string): string => {
-		const num = parseInt(n);
-		if (num % 10 === 1 && num !== 11) return 'st';
-		if (num % 10 === 2 && num !== 12) return 'nd';
-		if (num % 10 === 3 && num !== 13) return 'rd';
-		return 'th';
-	};
-
 	onMount(() => {
 		if (
 			!($config?.features as any)?.enable_automations ||
@@ -340,10 +322,35 @@
 		}
 
 		loaded = true;
-		syncHeader();
+		ensureChannels();
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Shift') {
+				shiftKey = true;
+				openAutomationMenuId = null;
+			}
+		};
+
+		const onKeyUp = (event: KeyboardEvent) => {
+			if (event.key === 'Shift') {
+				shiftKey = false;
+			}
+		};
+
+		const onBlur = () => {
+			shiftKey = false;
+		};
+
+		window.addEventListener('keydown', onKeyDown);
+		window.addEventListener('keyup', onKeyUp);
+		window.addEventListener('blur', onBlur);
 
 		return () => {
 			clearTimeout(searchDebounceTimer);
+
+			window.removeEventListener('keydown', onKeyDown);
+			window.removeEventListener('keyup', onKeyUp);
+			window.removeEventListener('blur', onBlur);
 		};
 	});
 
@@ -353,6 +360,9 @@
 </script>
 
 <svelte:head>
+	<!-- LICENSE covers this Open WebUI browser-title identifier.
+	Do not alter, remove, obscure, or replace it except as LICENSE permits:
+	https://docs.openwebui.com/license. -->
 	<title>{$i18n.t('Automations')} / {$WEBUI_NAME}</title>
 </svelte:head>
 
@@ -458,7 +468,7 @@
 							onChange={() => {
 								page = 1;
 							}}
-							triggerClass="relative h-8 w-full flex items-center gap-0.5 px-1.5 py-1.5 bg-transparent rounded-xl text-[13px] font-normal text-gray-700 transition dark:text-gray-200"
+							triggerClass="relative h-8 w-full flex items-center gap-0.5 px-1.5 py-1.5 bg-transparent rounded-xl text-[0.8125rem] font-normal text-gray-700 transition dark:text-gray-200"
 						>
 							<svelte:fragment slot="trigger" let:selectedLabel>
 								<span
@@ -480,7 +490,7 @@
 						<Dropdown align="end">
 							<Tooltip content={$i18n.t('Actions')}>
 								<button
-									class="flex h-8 items-center gap-1.5 rounded-xl bg-transparent px-1.5 text-[13px] font-normal text-gray-700 transition dark:text-gray-200"
+									class="flex h-8 items-center gap-1.5 rounded-xl bg-transparent px-1.5 text-[0.8125rem] font-normal text-gray-700 transition dark:text-gray-200"
 									type="button"
 								>
 									<span>{$i18n.t('Actions')}</span>
@@ -489,9 +499,9 @@
 							</Tooltip>
 
 							<div slot="content">
-								<DropdownMenu className="w-[170px] shadow-sm">
+								<DropdownMenu className="min-w-[10.625rem] shadow-sm">
 									<button
-										class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[13px]"
+										class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem]"
 										type="button"
 										on:click={() => bulkToggleHandler(true)}
 									>
@@ -499,7 +509,7 @@
 										{$i18n.t('Enable All')}
 									</button>
 									<button
-										class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[13px]"
+										class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem]"
 										type="button"
 										on:click={() => bulkToggleHandler(false)}
 									>
@@ -554,7 +564,7 @@
 										<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
 											<Tooltip content={automation.name} className="min-w-0" placement="top-start">
 												<div
-													class="truncate text-[13px] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
+													class="truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
 												>
 													{automation.name}
 												</div>
@@ -562,11 +572,13 @@
 
 											<Tooltip
 												content={automation.last_run_at
-													? dayjs(automation.last_run_at / 1000000).format('LLLL')
+													? dayjs(automation.last_run_at / 1000000)
+															.locale($i18n.language)
+															.format('LLLL')
 													: $i18n.t('Never')}
 											>
 												<div
-													class="shrink-0 truncate text-[11px] leading-5 text-gray-400 dark:text-gray-600"
+													class="shrink-0 truncate text-[0.6875rem] leading-5 text-gray-400 dark:text-gray-600"
 												>
 													{formatLastRun(automation)}
 												</div>
@@ -577,69 +589,91 @@
 							</div>
 
 							<div
-								class="hidden max-w-44 shrink-0 self-center truncate text-right text-[11px] leading-5 text-gray-500 dark:text-gray-500 md:block"
+								class="hidden max-w-56 shrink-0 self-center truncate text-right text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-500 md:block"
 							>
-								<Tooltip content={formatRRule(automation.data.rrule)} className="min-w-0">
+								<Tooltip
+									content={`${formatSchedule(automation.data.rrule, $i18n)} · ${formatDestination(automation)}`}
+									className="min-w-0"
+								>
 									<div class="truncate">
-										{formatRRule(automation.data.rrule)}
+										{formatSchedule(automation.data.rrule, $i18n)} · {formatDestination(automation)}
 									</div>
 								</Tooltip>
 							</div>
 
-							<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
-								<AutomationMenu
-									show={openAutomationMenuId === automation.id}
-									editHandler={() => {
-										goto(`/automations/${automation.id}`);
-									}}
-									cloneHandler={() => {
-										cloneHandler(automation);
-									}}
-									runHandler={() => {
-										runNowHandler(automation);
-									}}
-									deleteHandler={() => {
-										deleteTarget = automation;
-										showDeleteConfirm = true;
-									}}
-									onClose={() => {
-										openAutomationMenuId = null;
-									}}
-								>
-									<button
-										class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
-										type="button"
-										aria-label={$i18n.t('Automation Menu')}
-										on:click={(e) => {
-											e.preventDefault();
-											e.stopPropagation();
-											openAutomationMenuId =
-												openAutomationMenuId === automation.id ? null : automation.id;
-										}}
-									>
-										<EllipsisHorizontal className="size-4" />
-									</button>
-								</AutomationMenu>
-
-								<button
-									class="flex h-6 items-center"
-									type="button"
-									on:click={(e) => {
-										e.stopPropagation();
-										e.preventDefault();
-									}}
-								>
-									<Tooltip
-										content={automation.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
-									>
-										<Switch
-											bind:state={automation.is_active}
-											on:change={() => {
-												toggleHandler(automation);
+							<div class="flex shrink-0 flex-row items-center self-center">
+								{#if shiftKey}
+									<Tooltip content={$i18n.t('Delete')}>
+										<button
+											class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+											type="button"
+											aria-label={$i18n.t('Delete')}
+											on:click={(e) => {
+												e.preventDefault();
+												e.stopPropagation();
+												deleteHandler(automation);
 											}}
-										/>
+										>
+											<GarbageBin className="size-4" />
+										</button>
 									</Tooltip>
-								</button>
+								{:else}
+									<div class="flex shrink-0 flex-row items-center gap-1.5 self-center">
+										<AutomationMenu
+											show={openAutomationMenuId === automation.id}
+											editHandler={() => {
+												goto(`/automations/${automation.id}`);
+											}}
+											cloneHandler={() => {
+												cloneHandler(automation);
+											}}
+											runHandler={() => {
+												runNowHandler(automation);
+											}}
+											deleteHandler={() => {
+												deleteTarget = automation;
+												showDeleteConfirm = true;
+											}}
+											onClose={() => {
+												openAutomationMenuId = null;
+											}}
+										>
+											<button
+												class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition dark:text-gray-500"
+												type="button"
+												aria-label={$i18n.t('Automation Menu')}
+												on:click={(e) => {
+													e.preventDefault();
+													e.stopPropagation();
+													openAutomationMenuId =
+														openAutomationMenuId === automation.id ? null : automation.id;
+												}}
+											>
+												<EllipsisHorizontal className="size-4" />
+											</button>
+										</AutomationMenu>
+
+										<button
+											class="flex h-6 items-center"
+											type="button"
+											on:click={(e) => {
+												e.stopPropagation();
+												e.preventDefault();
+											}}
+										>
+											<Tooltip
+												content={automation.is_active ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+											>
+												<Switch
+													bind:state={automation.is_active}
+													on:change={() => {
+														toggleHandler(automation);
+													}}
+												/>
+											</Tooltip>
+										</button>
+									</div>
+								{/if}
 							</div>
 						</div>
 					{/each}

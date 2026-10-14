@@ -35,7 +35,7 @@
 	import ProfilePreview from '$lib/components/channel/Messages/Message/ProfilePreview.svelte';
 	import UserPreviewModal from '$lib/components/admin/UserPreviewModal.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	let page = 1;
 
@@ -72,7 +72,7 @@
 		}
 	};
 
-	const sortState = (key) =>
+	const sortState = (key, orderBy, direction) =>
 		orderBy === key ? (direction === 'asc' ? 'ascending' : 'descending') : 'none';
 
 	const setSortKey = (key) => {
@@ -166,9 +166,10 @@
 			className="mx-0"
 			banner={{
 				type: 'error',
-				title: 'License Error',
-				content:
+				title: $i18n.t('License Error'),
+				content: $i18n.t(
 					'Exceeded the number of seats in your license. Please contact support to increase the number of seats.'
+				)
 			}}
 		/>
 	</div>
@@ -224,7 +225,11 @@
 		<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400 table-auto max-w-full">
 			<thead class="text-xs text-gray-800 uppercase bg-transparent dark:text-gray-200">
 				<tr class=" border-b-[1.5px] border-gray-50 dark:border-gray-850/30">
-					<th scope="col" class="font-normal select-none" aria-sort={sortState('name')}>
+					<th
+						scope="col"
+						class="font-normal select-none"
+						aria-sort={sortState('name', orderBy, direction)}
+					>
 						<button
 							type="button"
 							class="flex w-full gap-1.5 items-center px-2.5 py-1.5"
@@ -247,7 +252,11 @@
 							{/if}
 						</button>
 					</th>
-					<th scope="col" class="font-normal select-none" aria-sort={sortState('role')}>
+					<th
+						scope="col"
+						class="font-normal select-none"
+						aria-sort={sortState('role', orderBy, direction)}
+					>
 						<button
 							type="button"
 							class="flex w-full gap-1.5 items-center px-2.5 py-1.5"
@@ -270,7 +279,11 @@
 							{/if}
 						</button>
 					</th>
-					<th scope="col" class="font-normal select-none" aria-sort={sortState('email')}>
+					<th
+						scope="col"
+						class="font-normal select-none"
+						aria-sort={sortState('email', orderBy, direction)}
+					>
 						<button
 							type="button"
 							class="flex w-full gap-1.5 items-center px-2.5 py-1.5"
@@ -294,7 +307,11 @@
 						</button>
 					</th>
 
-					<th scope="col" class="font-normal select-none" aria-sort={sortState('last_active_at')}>
+					<th
+						scope="col"
+						class="font-normal select-none"
+						aria-sort={sortState('last_active_at', orderBy, direction)}
+					>
 						<button
 							type="button"
 							class="flex w-full gap-1.5 items-center px-2.5 py-1.5"
@@ -318,7 +335,11 @@
 							{/if}
 						</button>
 					</th>
-					<th scope="col" class="font-normal select-none" aria-sort={sortState('created_at')}>
+					<th
+						scope="col"
+						class="font-normal select-none"
+						aria-sort={sortState('created_at', orderBy, direction)}
+					>
 						<button
 							type="button"
 							class="flex w-full gap-1.5 items-center px-2.5 py-1.5"
@@ -355,6 +376,9 @@
 										src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`}
 										alt="user"
 										on:error={(e) => {
+											// LICENSE covers this Open WebUI fallback logo.
+											// Do not alter, remove, obscure, or replace it except as LICENSE permits:
+											// https://docs.openwebui.com/license.
 											e.currentTarget.src = '/favicon.png';
 										}}
 									/>
@@ -389,11 +413,15 @@
 						<td class=" px-3 py-1 max-w-48 truncate"> {user.email} </td>
 
 						<td class=" px-3 py-1">
-							{dayjs(user.last_active_at * 1000).fromNow()}
+							{dayjs(user.last_active_at * 1000)
+								.locale($i18n.language)
+								.fromNow()}
 						</td>
 
 						<td class=" px-3 py-1">
-							{dayjs(user.created_at * 1000).format('LL')}
+							{dayjs(user.created_at * 1000)
+								.locale($i18n.language)
+								.format('LL')}
 						</td>
 
 						<td class="px-3 py-1 text-right">
@@ -474,18 +502,30 @@
 
 {#if !$config?.license_metadata}
 	{#if total > 50}
+		<!-- LICENSE covers the Open WebUI branding narrative here.
+		Do not alter, remove, obscure, or replace it except as LICENSE permits:
+		https://docs.openwebui.com/license. -->
 		<div class="mt-3 mb-3 pb-1 text-gray-700 dark:text-gray-300">
 			<div class="max-w-3xl text-xs leading-5">
 				<div class="text-gray-900 dark:text-gray-100">
+					<!-- LICENSE covers this Open WebUI wordmark.
+					Do not alter, remove, obscure, or replace it except as LICENSE permits:
+					https://docs.openwebui.com/license. -->
 					{$i18n.t('Running Open WebUI for a team?')}
 				</div>
 				<div class="mt-2 space-y-2">
 					<p>
+						<!-- LICENSE covers this Open WebUI branding copy.
+						Do not alter, remove, obscure, or replace it except as LICENSE permits:
+						https://docs.openwebui.com/license. -->
 						{$i18n.t(
 							'You have more than 50 users, which often means this workspace is supporting organizational use. Open WebUI is free to use as-is, with no restrictions or hidden limits, and we want to keep it that way.'
 						)}
 					</p>
 					<p class="text-gray-500 dark:text-gray-400">
+						<!-- LICENSE covers this Open WebUI branding copy.
+						Do not alter, remove, obscure, or replace it except as LICENSE permits:
+						https://docs.openwebui.com/license. -->
 						{$i18n.t(
 							'By supporting the project through sponsorship or an enterprise license, you help us stay independent, ship new features faster, improve stability, and grow Open WebUI for the long haul.'
 						)}

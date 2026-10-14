@@ -9,6 +9,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ExperimentalBadge from '$lib/components/common/ExperimentalBadge.svelte';
 	import Cog6 from '$lib/components/icons/Cog6.svelte';
 	import DatabaseSettings from '$lib/components/icons/DatabaseSettings.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
@@ -754,6 +755,9 @@
 								</div>
 
 								<div class="text-xs text-gray-500 mt-1">
+									<!-- LICENSE covers this Open WebUI wordmark.
+										Do not alter, remove, obscure, or replace it except as LICENSE permits:
+										https://docs.openwebui.com/license. -->
 									{$i18n.t(
 										'External vectors must be generated with the same embedding model configured in Open WebUI.'
 									)}
@@ -775,12 +779,12 @@
 							<div></div>
 
 							<button
-								class="px-3.5 py-1.5 text-sm font-normal bg-black hover:bg-gray-900 text-white dark:bg-white dark:text-black dark:hover:bg-gray-100 transition rounded-full flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+								class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white disabled:cursor-not-allowed"
 								type="submit"
 								disabled={creating || !sourceFormIsValid() || !testResult?.documents?.length}
 							>
 								{editingItem ? $i18n.t('Save') : $i18n.t('Create')}
-								{#if creating}<Spinner />{/if}
+								{#if creating}<Spinner className="size-3" />{/if}
 							</button>
 						</div>
 					</div>
@@ -793,15 +797,11 @@
 <div class="flex w-full flex-col justify-between text-xs">
 	<div class="mb-2 flex items-center justify-between">
 		<div class="flex items-center gap-2 leading-none text-gray-600 dark:text-gray-400">
-			<div>{$i18n.t('External Knowledge Sources')}</div>
-			<span
-				class="inline-flex items-center text-[0.625rem] font-normal uppercase leading-none text-gray-400 dark:text-gray-600"
-			>
-				{$i18n.t('Experimental')}
-			</span>
+			<div>{$i18n.t('settings.admin.integrations.externalKnowledge.title')}</div>
+			<ExperimentalBadge />
 		</div>
 
-		<Tooltip content={$i18n.t('Add Connection')}>
+		<Tooltip content={$i18n.t('settings.admin.integrations.externalKnowledge.addConnection.label')}>
 			<button
 				class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-black/5 hover:text-gray-900 dark:text-gray-600 dark:hover:bg-white/5 dark:hover:text-white"
 				on:click={openCreateSource}

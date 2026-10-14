@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 import uuid
@@ -170,6 +169,9 @@ class KnowledgeForm(BaseModel):
 
 
 class FileUserResponse(FileModelResponse):
+    directory_id: str | None = None
+    directory_path: str = ''
+    has_original: bool = True
     user: Optional[UserResponse] = None
 
 
@@ -468,14 +470,22 @@ class KnowledgeTable:
             print('search_knowledge_files error:', e)
             return KnowledgeFileListResponse(items=[], total=0)
 
-    async def check_access_by_user_id(self, id, user_id, permission='write', db: Optional[AsyncSession] = None) -> bool:
+    async def check_access_by_user_id(
+        self,
+        id,
+        user_id,
+        permission='write',
+        db: Optional[AsyncSession] = None,
+        user_group_ids: set[str] | None = None,
+    ) -> bool:
         knowledge = await self.get_knowledge_by_id(id, db=db)
         if not knowledge:
             return False
         if knowledge.user_id == user_id:
             return True
-        user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
-        user_group_ids = {group.id for group in user_groups}
+        if user_group_ids is None:
+            user_groups = await Groups.get_groups_by_member_id(user_id, db=db, include_inherited=True)
+            user_group_ids = {group.id for group in user_groups}
         return await AccessGrants.has_access(
             user_id=user_id,
             resource_type='knowledge',
@@ -485,24 +495,6 @@ class KnowledgeTable:
             db=db,
         )
 
-    async def get_knowledge_bases_by_user_id(
-        self, user_id: str, permission: str = 'write', db: Optional[AsyncSession] = None
-    ) -> list[KnowledgeUserModel]:
-        knowledge_bases = await self.get_knowledge_bases(db=db)
-        user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
-        user_group_ids = {group.id for group in user_groups}
-
-        # One grants query for all non-owned knowledge bases instead of one each
-        accessible_ids = await AccessGrants.get_accessible_resource_ids(
-            user_id=user_id,
-            resource_type='knowledge',
-            resource_ids=[kb.id for kb in knowledge_bases if kb.user_id != user_id],
-            permission=permission,
-            user_group_ids=user_group_ids,
-            db=db,
-        )
-        return [kb for kb in knowledge_bases if kb.user_id == user_id or kb.id in accessible_ids]
-
     async def get_knowledge_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[KnowledgeModel]:
         try:
             async with get_async_db_context(db) as db:
@@ -511,29 +503,6 @@ class KnowledgeTable:
                 return await self._to_knowledge_model(knowledge, db=db) if knowledge else None
         except Exception:
             return None
-
-    async def get_knowledge_by_id_and_user_id(
-        self, id: str, user_id: str, db: Optional[AsyncSession] = None
-    ) -> Optional[KnowledgeModel]:
-        knowledge = await self.get_knowledge_by_id(id, db=db)
-        if not knowledge:
-            return None
-
-        if knowledge.user_id == user_id:
-            return knowledge
-
-        user_groups = await Groups.get_groups_by_member_id(user_id, db=db)
-        user_group_ids = {group.id for group in user_groups}
-        if await AccessGrants.has_access(
-            user_id=user_id,
-            resource_type='knowledge',
-            resource_id=knowledge.id,
-            permission='write',
-            user_group_ids=user_group_ids,
-            db=db,
-        ):
-            return knowledge
-        return None
 
     async def get_knowledges_by_file_id(self, file_id: str, db: Optional[AsyncSession] = None) -> list[KnowledgeModel]:
         try:
@@ -569,7 +538,7 @@ class KnowledgeTable:
         try:
             async with get_async_db_context(db) as db:
                 stmt = (
-                    select(File, User)
+                    select(File, User, KnowledgeFile.directory_id)
                     .join(KnowledgeFile, File.id == KnowledgeFile.file_id)
                     .outerjoin(User, User.id == KnowledgeFile.user_id)
                     .filter(KnowledgeFile.knowledge_id == knowledge_id)
@@ -637,9 +606,29 @@ class KnowledgeTable:
                 result = await db.execute(stmt)
                 items = result.all()
 
+                directories = {
+                    directory.id: directory for directory in await self.get_all_directories(knowledge_id, db=db)
+                }
+                paths = {}
+
+                def directory_path(directory_id):
+                    if directory_id not in paths:
+                        names, seen = [], set()
+                        current = directory_id
+                        while current in directories and current not in seen:
+                            seen.add(current)
+                            directory = directories[current]
+                            names.append(directory.name)
+                            current = directory.parent_id
+                        paths[directory_id] = '/'.join(reversed(names))
+                    return paths[directory_id]
+
                 files = [
                     FileUserResponse(
                         id=file.id,
+                        directory_id=directory_id,
+                        directory_path=directory_path(directory_id),
+                        has_original=bool(file.path),
                         user_id=file.user_id,
                         hash=file.hash,
                         filename=file.filename,
@@ -648,7 +637,7 @@ class KnowledgeTable:
                         updated_at=file.updated_at,
                         user=(UserResponse(**UserModel.model_validate(user).model_dump()) if user else None),
                     )
-                    for file, user in items
+                    for file, user, directory_id in items
                 ]
 
                 return KnowledgeFileListResponse(
@@ -659,6 +648,7 @@ class KnowledgeTable:
                         db=db,
                     ),
                     breadcrumbs=await self.get_directory_breadcrumbs(
+                        knowledge_id,
                         filter.get('directory_id') if filter else None,
                         db=db,
                     ),
@@ -809,25 +799,6 @@ class KnowledgeTable:
             log.exception(e)
             return None
 
-    async def update_knowledge_data_by_id(
-        self, id: str, data: dict, db: Optional[AsyncSession] = None
-    ) -> Optional[KnowledgeModel]:
-        try:
-            async with get_async_db_context(db) as db:
-                await db.execute(
-                    update(Knowledge)
-                    .filter_by(id=id)
-                    .values(
-                        data=data,
-                        updated_at=int(time.time()),
-                    )
-                )
-                await db.commit()
-                return await self.get_knowledge_by_id(id=id, db=db)
-        except Exception as e:
-            log.exception(e)
-            return None
-
     async def update_knowledge_meta_by_id(
         self, id: str, meta: dict, db: Optional[AsyncSession] = None
     ) -> Optional[KnowledgeModel]:
@@ -961,6 +932,7 @@ class KnowledgeTable:
 
     async def get_directory_breadcrumbs(
         self,
+        knowledge_id: str,
         directory_id: Optional[str],
         db: Optional[AsyncSession] = None,
     ) -> list[KnowledgeDirectoryModel]:
@@ -975,7 +947,10 @@ class KnowledgeTable:
 
             while current_id and current_id not in seen:
                 seen.add(current_id)
-                result = await db.execute(select(KnowledgeDirectory).filter_by(id=current_id))
+                # Scoped by knowledge base so a caller-supplied id cannot walk another one's tree.
+                result = await db.execute(
+                    select(KnowledgeDirectory).filter_by(id=current_id, knowledge_id=knowledge_id)
+                )
                 directory = result.scalars().first()
                 if not directory:
                     break
@@ -1121,6 +1096,26 @@ class KnowledgeTable:
         child_ids = [row[0] for row in result.all()]
         for child_id in child_ids:
             await self._delete_files_in_subtree(child_id, db=db)
+
+    async def get_files_by_id_and_directory_id(
+        self,
+        knowledge_id: str,
+        directory_id: str,
+        db: Optional[AsyncSession] = None,
+    ) -> list[FileModel]:
+        """Get all files in a directory and its subdirectories."""
+        async with get_async_db_context(db) as db:
+            directory_ids = [directory_id]
+            for parent_id in directory_ids:
+                result = await db.execute(select(KnowledgeDirectory.id).filter_by(parent_id=parent_id))
+                directory_ids.extend(result.scalars().all())
+            result = await db.execute(
+                select(File)
+                .join(KnowledgeFile, File.id == KnowledgeFile.file_id)
+                .filter(KnowledgeFile.knowledge_id == knowledge_id)
+                .filter(KnowledgeFile.directory_id.in_(directory_ids))
+            )
+            return [FileModel.model_validate(file) for file in result.scalars().all()]
 
     async def move_file_to_directory(
         self,
