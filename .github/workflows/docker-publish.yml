@@ -38,22 +38,11 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
-      - name: Prepare CI Dockerfile
-        run: |
-          awk '
-            /^FROM --platform=\$BUILDPLATFORM node:/ {
-              print
-              print "ENV NODE_OPTIONS=\"--max-old-space-size=12288\""
-              next
-            }
-            { print }
-          ' Dockerfile > "${RUNNER_TEMP}/Dockerfile"
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ${{ runner.temp }}/Dockerfile
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
