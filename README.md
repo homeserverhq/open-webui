@@ -1,5 +1,12 @@
 # Open WebUI 👋
 
+> [!IMPORTANT]
+> **Legal Disclosure**
+>
+> This repository is a customized fork of [Open WebUI](https://github.com/open-webui/open-webui). It is independently maintained and is **not affiliated with, endorsed by, sponsored by, or maintained by** Open WebUI Inc. or the official Open WebUI project.
+>
+> Open WebUI is Copyright (c) 2023- Open WebUI Inc., created by Timothy Jaeryang Baek. All rights reserved. Portions of this repository are distributed under the Open WebUI License and prior licenses; see [LICENSE](./LICENSE), [LICENSE_NOTICE](./LICENSE_NOTICE), and [LICENSE_HISTORY](./LICENSE_HISTORY) for the applicable terms. Modifications made in this fork are provided under those terms.
+
 ![GitHub stars](https://img.shields.io/github/stars/open-webui/open-webui?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/open-webui/open-webui?style=social)
 ![GitHub watchers](https://img.shields.io/github/watchers/open-webui/open-webui?style=social)

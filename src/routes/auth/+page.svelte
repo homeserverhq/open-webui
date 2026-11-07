@@ -656,6 +656,17 @@
 									</button>
 								</div>
 							{/if}
+
+							<div class="mt-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
+								Notice: The software interface on this device is a
+								<a
+									href="https://github.com/homeserverhq/open-webui"
+									target="_blank"
+									class="underline hover:text-gray-700 dark:hover:text-gray-300"
+									>customized deployment of Open WebUI</a
+								>. This release is independently maintained and is not affiliated with, endorsed by,
+								or maintained by the official Open WebUI team.
+							</div>
 						</div>
 						{#if $config?.metadata?.login_footer}
 							<div class="max-w-3xl mx-auto">

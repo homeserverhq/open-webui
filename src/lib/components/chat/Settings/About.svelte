@@ -172,6 +172,20 @@
 				>
 			</div>
 
+			<div
+				class="mt-2 border-t border-gray-100 pt-2 text-xs leading-5 text-gray-400 dark:border-gray-800 dark:text-gray-500"
+			>
+				Legal Disclosure: This product utilizes a
+				<a
+					href="https://github.com/homeserverhq/open-webui"
+					target="_blank"
+					class="underline hover:text-gray-600 dark:hover:text-gray-300"
+					>customized fork of Open WebUI</a
+				>. In accordance with the Open WebUI License Agreement, please be advised that this release
+				is operated independently and is not affiliated with or maintained by the official Open
+				WebUI team. Original software copyright © Open WebUI Inc.
+			</div>
+
 			<div class="text-xs text-gray-400 dark:text-gray-500">
 				{$i18n.t('Created by')}
 				<a class="text-gray-500 dark:text-gray-400" href="https://github.com/tjbck" target="_blank"
