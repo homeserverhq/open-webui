@@ -10,7 +10,9 @@
 	const i18n = getContext('i18n');
 
 	export let selectedModels = [''];
+	export let onModelSelect: (models: string[]) => void = () => {};
 	export let disabled = false;
+	export let multipleEnabled = true;
 
 	export let showSetDefault = true;
 	export let triggerClassName = 'text-lg';
@@ -80,11 +82,12 @@
 					{align}
 					{showSetDefault}
 					onSetDefault={saveDefaultModel}
-					multipleEnabled={$user?.role === 'admin' ||
-						($user?.permissions?.chat?.multiple_models ?? true)}
+					multipleEnabled={multipleEnabled &&
+						($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))}
 					{disabled}
 					bind:compareEnabled={compareModels}
 					bind:values={selectedModels}
+					{onModelSelect}
 				/>
 			</div>
 		</div>

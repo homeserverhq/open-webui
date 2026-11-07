@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -42,17 +43,7 @@ from typing_extensions import Self
 log = logging.getLogger(__name__)
 
 
-# ── SSL URL normalization (used by sync engine & Alembic migrations) ─
-#
-# psycopg2 (sync) needs ``sslmode=`` in the connection string (it does
-# not recognise the bare ``ssl=`` key that some ORMs emit).  The helpers
-# below strip all SSL-related query params, normalise them, and
-# reattach them in the canonical libpq form.
-#
-# The **async** engine now uses psycopg (v3), which speaks libpq
-# natively, so it needs no translation at all — the DATABASE_URL is
-# passed through as-is.
-# ─────────────────────────────────────────────────────────────────────
+# Normalize SSL query parameters for sync psycopg2 and Alembic; async psycopg uses the URL unchanged.
 
 
 def _pop_first(params: dict[str, list[str]], key: str) -> str | None:
@@ -280,10 +271,8 @@ def _create_async_engine(*args, **kwargs):
     return create_async_engine(*args, **_json_codec_kwargs(kwargs))
 
 
-# ============================================================
-# SYNC ENGINE (used only for: startup migrations, config loading,
+# Sync engine (used only for: startup migrations, config loading,
 #              Alembic, peewee migration, health checks)
-# ============================================================
 
 # Handle SQLCipher URLs
 if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
@@ -442,9 +431,7 @@ def get_session():
 get_db = contextmanager(get_session)
 
 
-# ============================================================
-# ASYNC ENGINE (used for ALL runtime database operations)
-# ============================================================
+# Async engine (used for all runtime database operations)
 
 # psycopg (v3) speaks libpq natively — the full DATABASE_URL is passed
 # through as-is.  SSL params, ``options``, ``target_session_attrs``, etc.
@@ -476,6 +463,12 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
     @event.listens_for(async_engine.sync_engine, 'connect')
     def _set_sqlite_pragmas(dbapi_connection, connection_record):
         _apply_sqlite_pragmas(dbapi_connection)
+
+    @event.listens_for(async_engine.sync_engine, 'handle_error')
+    def _keep_connection_on_cancel(context):
+        # invalidating here would close the connection inside the cancelled task, and that close is lost
+        if isinstance(context.original_exception, asyncio.CancelledError):
+            context.is_disconnect = False
 else:
     if isinstance(DATABASE_POOL_SIZE, int):
         if DATABASE_POOL_SIZE > 0:
@@ -514,20 +507,14 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_async_session():
     """Async session generator for FastAPI Depends()."""
     async with AsyncSessionLocal() as db:
-        try:
-            yield db
-        finally:
-            await db.close()
+        yield db
 
 
 @asynccontextmanager
 async def get_async_db():
     """Async context manager for use outside of FastAPI dependency injection."""
     async with AsyncSessionLocal() as db:
-        try:
-            yield db
-        finally:
-            await db.close()
+        yield db
 
 
 @asynccontextmanager

@@ -120,7 +120,7 @@
 				data = { filePdfData: await blob.arrayBuffer() };
 			else if (ext === 'svg' || mime === 'image/svg+xml') {
 				previewName = `${name}.svg`;
-				data = { fileContent: await blob.text() };
+				data = { fileContent: await getFileIndexedText(localStorage.token, file.id!, signal) };
 				sourceToggle = true;
 			} else if (mime.startsWith('image/') || /^(png|jpe?g|gif|webp|avif|bmp|ico)$/.test(ext)) {
 				objectUrl = URL.createObjectURL(blob);
@@ -154,7 +154,7 @@
 				) ||
 				mime.includes('json')
 			) {
-				data = { fileContent: await blob.text() };
+				data = { fileContent: await getFileIndexedText(localStorage.token, file.id!, signal) };
 				if (mime === 'text/csv' && ext !== 'csv') previewName = `${name}.csv`;
 				if (mime === 'text/html' && !/^html?$/.test(ext)) previewName = `${name}.html`;
 				if (mime.includes('json') && !/^(json|jsonc|jsonl|json5|ipynb)$/.test(ext))
@@ -205,6 +205,7 @@
 		} catch (error) {
 			toast.error(message(error));
 		} finally {
+			if (!noOriginal && (loading || 'fileContent' in previewData)) await loadOriginal();
 			saving = false;
 		}
 	};
@@ -244,14 +245,14 @@
 			{#if state.editing}
 				<button
 					type="button"
-					class="shrink-0 px-1 py-0.5 text-gray-500"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 					disabled={saving}
 					on:click={() => (state = { ...state, draft: state.indexed ?? '', editing: false })}
 					>{$i18n.t('Cancel')}</button
 				>
 				<button
 					type="button"
-					class="flex shrink-0 items-center gap-1 px-1 py-0.5"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-2.5 text-xs font-normal text-white transition hover:bg-black disabled:opacity-60 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
 					disabled={saving || state.indexed === null}
 					on:click={save}
 				>
@@ -260,7 +261,7 @@
 			{:else}
 				<button
 					type="button"
-					class="shrink-0 px-1 py-0.5 text-gray-500"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 					on:click={() => {
 						state = { ...state, mode: 'indexed', editing: true, draft: state.indexed ?? '' };
 					}}>{$i18n.t('Edit')}</button

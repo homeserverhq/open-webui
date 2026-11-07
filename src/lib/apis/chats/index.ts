@@ -481,6 +481,18 @@ export const getAllChats = async (token: string) => {
 	return chats;
 };
 
+export const getChatSearchSnippet = async (token: string, id: string, text: string) => {
+	const searchParams = new URLSearchParams({ text });
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/search/snippet?${searchParams}`, {
+		headers: {
+			Accept: 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw getErrorDetail(await res.json());
+	return (await res.json()) as string | null;
+};
+
 export const getChatListBySearchText = async (token: string, text: string, page: number = 1) => {
 	let error = null;
 
@@ -753,10 +765,11 @@ export const getChatListByTagName = async (token: string = '', tagName: string) 
 	}));
 };
 
-export const getChatById = async (token: string, id: string) => {
+export const getChatById = async (token: string, id: string, signal?: AbortSignal) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}`, {
+		signal,
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -772,6 +785,7 @@ export const getChatById = async (token: string, id: string) => {
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = err.detail;
 
 			console.error(err);
@@ -1315,6 +1329,23 @@ export const updateChatById = async (
 	return res;
 };
 
+export const updateChatParams = async (
+	token: string,
+	id: string,
+	params: Record<string, unknown>
+) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/params`, {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify(params)
+	});
+	if (!res.ok) throw getErrorDetail(await res.json());
+	return res.json();
+};
+
 export const compactChatById = async (token: string, id: string, model?: string | null) => {
 	let error = null;
 
@@ -1448,10 +1479,11 @@ export const deleteChatById = async (token: string, id: string) => {
 	return res;
 };
 
-export const getTagsById = async (token: string, id: string) => {
+export const getTagsById = async (token: string, id: string, signal?: AbortSignal) => {
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/chats/${id}/tags`, {
+		signal,
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -1467,6 +1499,7 @@ export const getTagsById = async (token: string, id: string) => {
 			return json;
 		})
 		.catch((err) => {
+			if (signal?.aborted) return null;
 			error = getErrorDetail(err);
 
 			console.error(err);

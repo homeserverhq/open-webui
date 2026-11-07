@@ -8,12 +8,13 @@
 		models,
 		selectedTerminalId,
 		settings,
-		terminalServers
+		terminalServers,
+		user
 	} from '$lib/stores';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import { getFolders } from '$lib/apis/folders';
 	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
-	import { searchFiles } from '$lib/apis/terminal';
+	import { searchFiles, filesystemFile } from '$lib/apis/terminal';
 	import { decodeString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
 	import {
 		resolveLocalizedModelDescription,
@@ -33,6 +34,7 @@
 
 	export let query = '';
 	export let onSelect: (e: any) => void = () => {};
+	export let fileUploadEnabled: boolean = true;
 
 	let selectedIdx = 0;
 	export let filteredItems: any[] = [];
@@ -60,6 +62,8 @@
 	});
 
 	$: filteredModels = query ? fuse.search(query).map((e) => e.item) : modelItems;
+	let webUploadEnabled: boolean = true;
+	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
 	$: knowledgeResults = [
 		...filesystemItems,
 		...(query.startsWith('http')
@@ -70,7 +74,9 @@
 		...folderItems,
 		...knowledgeItems,
 		...fileItems
-	];
+	].filter((item) =>
+		['youtube', 'web'].includes(item.type) ? webUploadEnabled : fileUploadEnabled
+	);
 
 	$: filteredItems = [
 		...knowledgeResults.map((data) => ({ type: data.type, data })),
@@ -107,6 +113,8 @@
 			return;
 		}
 
+		const terminalId = $selectedTerminalId;
+		const sessionId = $activeChatId;
 		const res = await searchFiles(
 			terminal.url,
 			terminal.key,
@@ -114,19 +122,15 @@
 			'.',
 			20,
 			'any',
-			$activeChatId || undefined,
+			sessionId || undefined,
 			localStorage.getItem('fileNav:showHidden') === 'true'
 		).catch(() => null);
 
+		if (terminalId !== $selectedTerminalId || sessionId !== $activeChatId) return;
 		filesystemItems = (res?.results ?? []).map((item: any) => ({
-			...item,
-			type: 'filesystem',
+			...filesystemFile(item, terminalId!, sessionId || null),
 			filesystem_type: item.type,
-			id: item.path,
-			url: item.path,
-			name: item.name,
-			description: item.path,
-			status: 'processed'
+			description: item.path
 		}));
 	};
 
@@ -241,7 +245,7 @@
 	{#each knowledgeResults as item, idx}
 		{@const itemIdx = idx}
 		{#if idx === 0 || item?.type !== knowledgeResults[idx - 1]?.type}
-			<div class="px-2 py-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+			<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
 				{#if item?.type === 'folder'}
 					{$i18n.t('Folders')}
 				{:else if item?.type === 'collection'}
@@ -255,9 +259,9 @@
 		{/if}
 
 		<button
-			class="flex h-[1.6875rem] w-full max-w-full items-center justify-between overflow-hidden rounded-xl px-2 text-left text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
+			class="flex h-6 w-full max-w-full items-center justify-between overflow-hidden rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
 			selectedIdx
-				? 'bg-gray-50/40 dark:bg-gray-800/40 dark:text-gray-100 selected-command-option-button'
+				? 'app-interactive-active selected-command-option-button'
 				: ''}"
 			type="button"
 			on:click={() => {
@@ -268,11 +272,9 @@
 			}}
 			data-selected={itemIdx === selectedIdx}
 		>
-			<div
-				class="flex w-full min-w-0 items-center gap-1.5 overflow-hidden text-black dark:text-gray-100"
-			>
+			<div class="flex w-full min-w-0 items-center gap-2 overflow-hidden">
 				<Tooltip
-					className="shrink-0 flex"
+					className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
 					content={item?.legacy
 						? $i18n.t('Legacy')
 						: item?.type === 'filesystem'
@@ -316,7 +318,7 @@
 {/if}
 
 {#if filteredModels.length > 0}
-	<div class="px-2 py-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+	<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
 		{$i18n.t('Models')}
 	</div>
 
@@ -324,9 +326,9 @@
 		{@const itemIdx = knowledgeResults.length + modelIdx}
 		<Tooltip content={model.id} placement="top-start">
 			<button
-				class="flex h-[1.6875rem] w-full items-center rounded-xl px-2 text-left text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
+				class="flex h-6 w-full items-center rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
 				selectedIdx
-					? 'bg-gray-50/40 dark:bg-gray-800/40 selected-command-option-button'
+					? 'app-interactive-active selected-command-option-button'
 					: ''}"
 				type="button"
 				on:click={() => {
@@ -338,11 +340,11 @@
 				on:focus={() => {}}
 				data-selected={itemIdx === selectedIdx}
 			>
-				<div class="flex min-w-0 items-center text-black dark:text-gray-100">
+				<div class="flex min-w-0 items-center gap-2">
 					<img
 						src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model.id}&lang=${$i18n.language}`}
 						alt={resolveLocalizedModelName(model, $i18n.language) ?? model.id}
-						class="mr-2 size-4.5 rounded-full object-cover"
+						class="size-4 shrink-0 rounded-full object-cover"
 						on:error={(e) => {
 							// LICENSE covers this Open WebUI fallback logo.
 							// Do not alter, remove, obscure, or replace it except as LICENSE permits:

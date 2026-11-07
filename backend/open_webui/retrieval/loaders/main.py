@@ -94,15 +94,6 @@ known_source_ext = [
     'svg',
 ]
 
-known_archive_ext = {'docx', 'epub', 'odt', 'pptx', 'xlsx'}
-known_archive_content_types = {
-    'application/epub+zip',
-    'application/vnd.oasis.opendocument.text',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-}
-
 
 class ExcelLoader:
     """Fallback Excel loader using pandas when unstructured is not installed."""
@@ -538,7 +529,7 @@ class Loader:
     def _get_loader(self, filename: str, file_content_type: str, file_path: str):
         file_ext = filename.split('.')[-1].lower()
 
-        if file_ext in known_archive_ext or file_content_type in known_archive_content_types:
+        if zipfile.is_zipfile(file_path):
             max_file_size = self.config['rag.file.max_size']
             try:
                 max_file_size_bytes = int(max_file_size) * 1024 * 1024 if max_file_size else 100 * 1024 * 1024
@@ -704,6 +695,7 @@ class Loader:
                 api_key=self.config['rag.mistral_ocr_api_key'],
                 file_path=file_path,
                 use_base64=self.config['rag.mistral_ocr_use_base64'],
+                params=self.config['rag.mistral_ocr_params'],
                 user=self.user,
             )
         elif (

@@ -1,5 +1,17 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
+export const toggleToolById = async (token: string, id: string) => {
+	const response = await fetch(`${WEBUI_API_BASE_URL}/tools/id/${encodeURIComponent(id)}/toggle`, {
+		method: 'POST',
+		headers: { Accept: 'application/json', authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		const error = await response.json();
+		throw error.detail ?? error;
+	}
+	return response.json();
+};
+
 export const createNewTool = async (token: string, tool: object) => {
 	let error = null;
 
@@ -214,7 +226,8 @@ export const updateToolById = async (token: string, id: string, tool: object) =>
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			...tool
+			...tool,
+			access_grants: undefined
 		})
 	})
 		.then(async (res) => {

@@ -97,7 +97,7 @@
 <ConfirmDialog bind:show={showDeleteConfirmDialog} on:confirm={deleteHandler} />
 
 {#if channel}
-	<Modal size="sm" bind:show>
+	<Modal ariaLabel={$i18n.t('Webhooks')} size="sm" bind:show>
 		<div>
 			<div class="flex justify-between dark:text-gray-100 px-4 pt-3 mb-1">
 				<div class="flex w-full justify-between items-center mr-3">
@@ -108,7 +108,7 @@
 
 					<button
 						type="button"
-						class="px-3 py-1.5 gap-1 rounded-xl bg-gray-100/50 dark:bg-gray-850/50 text-black dark:text-white transition font-normal text-xs flex items-center justify-center"
+						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-2.5 text-xs font-normal text-gray-800 transition hover:bg-gray-100/70 disabled:opacity-60 dark:bg-gray-850 dark:text-white dark:hover:bg-gray-850/60"
 						on:click={createHandler}
 						disabled={isSaving}
 					>
@@ -118,7 +118,8 @@
 				</div>
 
 				<button
-					class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+					aria-label={$i18n.t('Close')}
+					class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 					on:click={() => (show = false)}
 				>
 					<XMark className="size-4" />

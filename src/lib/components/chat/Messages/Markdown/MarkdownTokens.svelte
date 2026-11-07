@@ -1,12 +1,31 @@
 <script lang="ts">
 	import { decode } from 'html-entities';
 	import { onMount, getContext } from 'svelte';
+	import type { Readable } from 'svelte/store';
+	import type { Action } from 'svelte/action';
 	const i18n = getContext('i18n');
+	const markdown = getContext<
+		| {
+				document?: boolean;
+				taskEnabled?: Readable<boolean>;
+				onTaskClick?: (event: {
+					item: Tokens.ListItem;
+					checked: boolean;
+					input: HTMLInputElement;
+				}) => void;
+				lexer?: (source: string) => Token[];
+				renderHtml?: Action<HTMLElement, { id: string; tokens: Token[]; top: boolean }>;
+		  }
+		| undefined
+	>('markdown');
+
+	const taskEnabled = markdown?.taskEnabled;
 
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
 
-	import { type Token } from 'marked';
+	import { type Token, type Tokens } from 'marked';
+	import { v4 as uuidv4 } from 'uuid';
 	import { copyToClipboard, unescapeHtml } from '$lib/utils';
 	import { resolveChatMessageToolCall } from '$lib/apis/chats';
 
@@ -55,6 +74,8 @@
 	export let onTaskClick: Function = () => {};
 	export let onSourceClick: Function = () => {};
 	export let onToolCallResolved: Function = () => {};
+
+	const taskId = `task-${uuidv4()}`;
 
 	const headerComponent = (depth: number) => {
 		return 'h' + depth;
@@ -132,13 +153,12 @@
 	} text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition`;
 
 	$: displayTokens = getDisplayTokens(tokens);
+	$: renderHtml = tokens.some((token) => token.type === 'html') ? markdown?.renderHtml : undefined;
 	$: singlePlainBlock =
 		displayTokens.length === 1 &&
 		(displayTokens[0]?.type === 'paragraph' || displayTokens[0]?.type === 'text');
 
 	const exportTableToCSVHandler = (token, tokenIdx = 0) => {
-		console.log('Exporting table to CSV');
-
 		// Extract header row text, decode HTML entities, and escape for CSV.
 		const header = token.header.map(
 			(headerCell) => `"${decode(headerCell.text).replace(/"/g, '""')}"`
@@ -160,10 +180,6 @@
 		// Join the rows using commas (,) as the separator and rows using newline (\n).
 		const csvContent = csvData.map((row) => row.join(',')).join('\n');
 
-		// Log rows and CSV content to ensure everything is correct.
-		console.log(csvData);
-		console.log(csvContent);
-
 		// To handle Unicode characters, you need to prefix the data with a BOM:
 		const bom = '\uFEFF'; // BOM for UTF-8
 
@@ -176,7 +192,10 @@
 </script>
 
 <!-- {JSON.stringify(tokens)} -->
-{#each displayTokens as token, tokenIdx (tokenIdx)}
+{#if renderHtml}
+	<div class="contents" use:renderHtml={{ id, tokens, top }}></div>
+{/if}
+{#each renderHtml ? [] : displayTokens as token, tokenIdx (tokenIdx)}
 	{#if token.type === 'hr'}
 		<hr class="border-gray-50 dark:border-gray-850/30" />
 	{:else if token.type === 'heading'}
@@ -190,17 +209,19 @@
 			/>
 		</svelte:element>
 	{:else if token.type === 'code'}
-		{#if token.codeBlockStyle !== 'indented'}
+		{#if markdown?.document || token.codeBlockStyle !== 'indented'}
 			<CodeBlock
 				id={`${id}-${tokenIdx}`}
-				collapsed={$settings?.collapseCodeBlocks ?? false}
+				className={markdown?.document ? 'document-code-block' : ''}
+				collapsed={markdown?.document ? false : ($settings?.collapseCodeBlocks ?? false)}
 				{token}
 				lang={token?.lang ?? ''}
 				code={token?.text ?? ''}
 				{attributes}
-				{save}
-				{preview}
-				edit={editCodeBlock}
+				save={save && !markdown?.document}
+				preview={preview && !markdown?.document}
+				run={!markdown?.document}
+				edit={editCodeBlock && !markdown?.document}
 				stickyButtonsClassName={topPadding ? 'top-10' : 'top-0'}
 				onSave={(value) => {
 					onSave({
@@ -277,6 +298,7 @@
 			<div class=" absolute top-1 right-1.5 z-20 hover-reveal flex gap-0.5">
 				<Tooltip content={$i18n.t('Copy')}>
 					<button
+						aria-label={$i18n.t('Copy')}
 						class="p-1 rounded-lg bg-transparent transition"
 						on:click={(e) => {
 							e.stopPropagation();
@@ -289,6 +311,7 @@
 
 				<Tooltip content={$i18n.t('Export to CSV')}>
 					<button
+						aria-label={$i18n.t('Export to CSV')}
 						class="p-1 rounded-lg bg-transparent transition"
 						on:click={(e) => {
 							e.stopPropagation();
@@ -301,7 +324,7 @@
 			</div>
 		</div>
 	{:else if token.type === 'blockquote'}
-		{@const alert = alertComponent(token)}
+		{@const alert = alertComponent(token, markdown?.lexer)}
 		{#if alert}
 			<AlertRenderer {token} {alert} {allowEmbeds} />
 		{:else}
@@ -315,6 +338,7 @@
 					{allowEmbeds}
 					{save}
 					{preview}
+					{onPreview}
 					{compactPreview}
 					{editCodeBlock}
 					{onTaskClick}
@@ -328,20 +352,27 @@
 		{#if token.ordered}
 			<ol start={token.start || 1} dir="auto">
 				{#each token.items as item, itemIdx}
-					<li class="text-start">
+					<li
+						dir="auto"
+						class="text-start"
+						id={item?.task ? `${taskId}-${tokenIdx}-${itemIdx}` : undefined}
+					>
 						{#if item?.task}
 							<input
-								class=" translate-y-[1px] -translate-x-1 flex-shrink-0"
+								class="task-checkbox translate-y-[1px] -translate-x-1 [&:dir(rtl)]:translate-x-1 flex-shrink-0"
 								type="checkbox"
+								disabled={markdown?.document && !$taskEnabled}
 								checked={item.checked}
+								aria-labelledby={`${taskId}-${tokenIdx}-${itemIdx}`}
 								on:change={(e) => {
-									onTaskClick({
+									(markdown?.onTaskClick ?? onTaskClick)({
 										id: id,
 										token: token,
 										tokenIdx: tokenIdx,
 										item: item,
 										itemIdx: itemIdx,
-										checked: e.target.checked
+										input: e.currentTarget,
+										checked: e.currentTarget.checked
 									});
 								}}
 							/>
@@ -352,11 +383,12 @@
 							{chatId}
 							{messageId}
 							tokens={item.tokens}
-							top={token.loose}
+							top={item.task || token.loose}
 							{done}
 							{allowEmbeds}
 							{save}
 							{preview}
+							{onPreview}
 							{compactPreview}
 							{editCodeBlock}
 							{onTaskClick}
@@ -369,35 +401,43 @@
 		{:else}
 			<ul dir="auto" class="">
 				{#each token.items as item, itemIdx}
-					<li class="text-start {item?.task ? 'flex -translate-x-6.5 gap-3 ' : ''}">
+					<li
+						dir="auto"
+						class="text-start {item?.task ? 'relative list-none' : ''}"
+						id={item?.task ? `${taskId}-${tokenIdx}-${itemIdx}` : undefined}
+					>
 						{#if item?.task}
 							<input
-								class="flex-shrink-0"
+								class="task-checkbox"
 								type="checkbox"
+								disabled={markdown?.document && !$taskEnabled}
 								checked={item.checked}
+								aria-labelledby={`${taskId}-${tokenIdx}-${itemIdx}`}
 								on:change={(e) => {
-									onTaskClick({
+									(markdown?.onTaskClick ?? onTaskClick)({
 										id: id,
 										token: token,
 										tokenIdx: tokenIdx,
 										item: item,
 										itemIdx: itemIdx,
-										checked: e.target.checked
+										input: e.currentTarget,
+										checked: e.currentTarget.checked
 									});
 								}}
 							/>
 
-							<div>
+							<div class="task-content">
 								<svelte:self
 									id={`${id}-${tokenIdx}-${itemIdx}`}
 									{chatId}
 									{messageId}
 									tokens={item.tokens}
-									top={token.loose}
+									top={item.task || token.loose}
 									{done}
 									{allowEmbeds}
 									{save}
 									{preview}
+									{onPreview}
 									{compactPreview}
 									{editCodeBlock}
 									{onTaskClick}
@@ -411,11 +451,12 @@
 								{chatId}
 								{messageId}
 								tokens={item.tokens}
-								top={token.loose}
+								top={item.task || token.loose}
 								{done}
 								{allowEmbeds}
 								{save}
 								{preview}
+								{onPreview}
 								{compactPreview}
 								{editCodeBlock}
 								{onTaskClick}
@@ -476,6 +517,7 @@
 									{allowEmbeds}
 									{save}
 									{preview}
+									{onPreview}
 									{compactPreview}
 									{editCodeBlock}
 									{onTaskClick}
@@ -537,6 +579,7 @@
 						{allowEmbeds}
 						{save}
 						{preview}
+						{onPreview}
 						{compactPreview}
 						{editCodeBlock}
 						{onTaskClick}
@@ -646,3 +689,39 @@
 		{console.log('Unknown token', token)}
 	{/if}
 {/each}
+
+<style>
+	/* Reserve marker space on each item's start side, independently of the list's direction. */
+	ul,
+	ol {
+		padding-inline: 0;
+	}
+
+	li {
+		margin-inline-start: 1.5em;
+	}
+
+	ul > li > input.task-checkbox {
+		position: absolute;
+		inset-inline-start: -1.5em;
+		top: calc((1lh - 0.875rem) / 2);
+		margin: 0;
+	}
+
+	input.task-checkbox::after {
+		inset: 0;
+		width: auto;
+		height: auto;
+		background-size: 100% 100%;
+	}
+
+	input.task-checkbox:checked ~ :global(p),
+	input.task-checkbox:checked ~ .task-content > :global(p) {
+		opacity: 0.55;
+		text-decoration-line: line-through;
+	}
+
+	.task-content > :global(p:first-child) {
+		margin-top: 0;
+	}
+</style>

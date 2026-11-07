@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { v4 as uuidv4 } from 'uuid';
+	const settingId = `connection-${uuidv4()}`;
 	import { getContext, tick } from 'svelte';
 	const i18n = getContext('i18n');
 
@@ -33,7 +35,9 @@
 	}}
 />
 
-<div class="flex w-full items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
+<div
+	class="group/setting-row flex w-full items-center gap-3 text-xs text-gray-600 dark:text-gray-400"
+>
 	<Tooltip className="w-full relative" content={''} placement="top-start">
 		<div class="flex w-full">
 			<div
@@ -52,14 +56,20 @@
 				</Tooltip>
 
 				{#if connection?.info?.name}
-					<div class="w-full bg-transparent capitalize outline-hidden">
+					<label
+						for={`${settingId}-control`}
+						class="w-full bg-transparent capitalize outline-hidden text-gray-600 dark:text-gray-400 transition-colors duration-150 group-hover/setting-row:text-gray-900 group-focus-within/setting-row:text-gray-900 dark:group-hover/setting-row:text-white dark:group-focus-within/setting-row:text-white group-has-[button[id$=-control]:enabled]/setting-row:cursor-pointer group-has-[button[id$=-control]:disabled]/setting-row:cursor-not-allowed"
+					>
 						{connection?.info?.name ?? connection?.url}
 						<span class="text-gray-500">{connection?.info?.id ?? ''}</span>
-					</div>
+					</label>
 				{:else}
-					<div>
+					<label
+						for={`${settingId}-control`}
+						class="text-gray-600 dark:text-gray-400 transition-colors duration-150 group-hover/setting-row:text-gray-900 group-focus-within/setting-row:text-gray-900 dark:group-hover/setting-row:text-white dark:group-focus-within/setting-row:text-white group-has-[button[id$=-control]:enabled]/setting-row:cursor-pointer group-has-[button[id$=-control]:disabled]/setting-row:cursor-not-allowed"
+					>
 						{connection?.url}
-					</div>
+					</label>
 				{/if}
 			</div>
 		</div>
@@ -68,6 +78,7 @@
 	<div class="flex shrink-0 items-center gap-1">
 		<Tooltip content={$i18n.t('Configure')} className="self-start">
 			<button
+				aria-label={$i18n.t('Configure')}
 				class="flex size-6 items-center justify-center rounded-lg text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-600 dark:hover:text-gray-300"
 				on:click={() => {
 					showConfigModal = true;
@@ -82,6 +93,7 @@
 			content={(connection?.config?.enable ?? true) ? $i18n.t('Enabled') : $i18n.t('Disabled')}
 		>
 			<Switch
+				id={`${settingId}-control`}
 				state={connection?.config?.enable ?? true}
 				on:change={() => {
 					if (!connection.config) connection.config = {};

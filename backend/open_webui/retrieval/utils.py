@@ -19,9 +19,7 @@ from langchain_classic.retrievers import (
 )
 from langchain_core.documents import Document
 from open_webui.config import (
-    RAG_EMBEDDING_CONTENT_PREFIX,
     RAG_EMBEDDING_PREFIX_FIELD_NAME,
-    RAG_EMBEDDING_QUERY_PREFIX,
     VECTOR_DB,
 )
 from open_webui.constants import ERROR_MESSAGES
@@ -120,6 +118,9 @@ def _extract_text_from_binary_response(
     if not filename or '.' not in filename:
         ext = mimetypes.guess_extension(content_type) or ''
         filename = f'download{ext}'
+    elif not mimetypes.guess_type(filename)[0] and content_type != 'application/octet-stream':
+        # The dot in names like arXiv's 1706.03762 is not an extension.
+        filename += mimetypes.guess_extension(content_type) or ''
 
     suffix = '.' + filename.split('.')[-1].lower() if '.' in filename else ''
 
@@ -210,6 +211,7 @@ async def get_content_from_url(request, url: str, *, config: dict | None = None)
             'rag.mineru_params',
             'rag.mistral_ocr_api_base_url',
             'rag.mistral_ocr_api_key',
+            'rag.mistral_ocr_params',
             'rag.mistral_ocr_use_base64',
             'rag.paddleocr_vl_base_url',
             'rag.paddleocr_vl_token',
@@ -236,17 +238,12 @@ async def get_content_from_url(request, url: str, *, config: dict | None = None)
 
 
 def _get_content_from_url_sync(request, url: str, config: dict):
-    from open_webui.retrieval.web.utils import validate_url, get_ssrf_safe_requests_session
+    from open_webui.retrieval.web.utils import WEB_LOADER_HEADERS, validate_url, get_ssrf_safe_requests_session
 
     # Validate URL before making any request (blocks private IPs, non-HTTP, filter list)
     validate_url(url)
 
-    # YouTube URLs (including youtu.be short links) should go straight to
-    # YoutubeLoader, which uses youtube-transcript-api and never needs the
-    # HTTP response body.  Probing the URL first is harmful for short URLs:
-    # youtu.be returns a 303 redirect with Content-Type: application/binary
-    # when allow_redirects=False, causing the binary-content path to run
-    # and produce empty docs → HTTP 400.
+    # Send YouTube URLs directly to YoutubeLoader; probing youtu.be can misclassify its 303 as binary.
     if is_youtube_url(url):
         loader = get_loader(request, url, config)
         docs = loader.load()
@@ -261,6 +258,9 @@ def _get_content_from_url_sync(request, url: str, config: dict):
     try:
         # Probe through the connect-time SSRF guard; bare requests.get re-resolves (DNS-rebinding gap).
         session = get_ssrf_safe_requests_session()
+        # Match the web loader's request, or sites that block unknown clients make a file look like a web page.
+        session.headers = WEB_LOADER_HEADERS
+        session.verify = config['web.loader.ssl_verification']
         response = session.get(url, stream=True, timeout=30, allow_redirects=AIOHTTP_CLIENT_ALLOW_REDIRECTS)
         response.raise_for_status()
         content_type = response.headers.get('Content-Type', '')
@@ -315,7 +315,7 @@ class VectorSearchRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
-        embedding = await self.embedding_function(query, RAG_EMBEDDING_QUERY_PREFIX)
+        embedding = await self.embedding_function(query, await Config.get('rag.embedding_query_prefix'))
         result = await ASYNC_VECTOR_DB_CLIENT.search(
             collection_name=self.collection_name,
             vectors=[embedding],
@@ -427,7 +427,7 @@ async def query_doc_with_native_hybrid_search(
 
         query_vectors = []
         if hybrid_bm25_weight < 1:
-            query_vectors = [await embedding_function(query, RAG_EMBEDDING_QUERY_PREFIX)]
+            query_vectors = [await embedding_function(query, await Config.get('rag.embedding_query_prefix'))]
 
         result = await ASYNC_VECTOR_DB_CLIENT.hybrid_search(
             collection_name=collection_name,
@@ -690,6 +690,7 @@ async def query_collection(
 ) -> dict:
     config = await Config.get_many(
         'rag.enable_hybrid_search',
+        'rag.embedding_query_prefix',
         'rag.top_k_reranker',
         'rag.relevance_threshold',
         'rag.hybrid_bm25_weight',
@@ -743,7 +744,7 @@ async def query_collection(
         return {'distances': [[]], 'documents': [[]], 'metadatas': [[]]}
 
     # Generate all query embeddings (in one call)
-    query_embeddings = await embedding_function(queries, prefix=RAG_EMBEDDING_QUERY_PREFIX)
+    query_embeddings = await embedding_function(queries, prefix=config['rag.embedding_query_prefix'])
     log.debug('query_collection: processing %s queries across %s collections', len(queries), len(collection_names))
 
     task_results = await asyncio.gather(
@@ -808,11 +809,7 @@ async def query_collection_with_hybrid_search(
         if native_task_results and all(result is not None for result in native_task_results):
             return merge_and_sort_query_results(native_task_results, k=k)
 
-    # Fetch every collection's contents once up front so the
-    # per-query/per-document loop below can reuse them. Each fetch
-    # offloads to a worker thread, so run them concurrently with
-    # `asyncio.gather` instead of awaiting them serially — otherwise
-    # latency scales linearly with `len(collection_names)`.
+    # Fetch collections concurrently once, then reuse the results across queries and documents.
     log.debug(
         'query_collection_with_hybrid_search: prefetching %d collections',
         len(collection_names),
@@ -1282,6 +1279,45 @@ def _is_safe_collection_name(name: str) -> bool:
     return isinstance(name, str) and bool(_SAFE_COLLECTION_NAME_RE.match(name))
 
 
+def resolve_collection_names(collection_name: str) -> set[str]:
+    """Names that may share a vector collection after backend normalization."""
+    normalized_name = collection_name.lower().replace('_', '-').strip('-')
+    collection_names = {normalized_name}
+    # Weaviate prepends C to digit-leading names, so both spellings can reach the same collection.
+    if normalized_name[:1].isdigit():
+        collection_names.add(f'c{normalized_name}')
+    elif normalized_name.startswith('c') and normalized_name[1:2].isdigit():
+        collection_names.add(normalized_name[1:])
+    return collection_names
+
+
+async def has_access_to_collection(collection_name: str, user: UserModel, access_type: str) -> bool:
+    """Require access to every recognized collection, preserving the policy for unknown names."""
+    has_authorized_collection = False
+    for resolved_name in resolve_collection_names(collection_name):
+        if resolved_name == 'knowledge-bases':
+            return False
+        if resolved_name.startswith('file-'):
+            has_access = await has_access_to_file(
+                file_id=resolved_name[len('file-') :], access_type=access_type, user=user
+            )
+        elif resolved_name.startswith('user-memory-'):
+            has_access = resolved_name == f'user-memory-{user.id}'
+        elif resolved_name.startswith('web-search-'):
+            has_access = resolved_name.startswith(f'web-search-{user.id}-')
+        else:
+            has_access = await Knowledges.check_access_by_user_id(resolved_name, user.id, permission=access_type)
+            if not has_access and not await Knowledges.get_knowledge_by_id(resolved_name):
+                continue
+
+        # A denied collection must win even when another name is authorized or unscoped names are enabled.
+        if not has_access:
+            return False
+        has_authorized_collection = True
+
+    return has_authorized_collection or ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS
+
+
 async def filter_accessible_collections(
     collection_names: set[str],
     user: UserModel,
@@ -1302,6 +1338,8 @@ async def filter_accessible_collections(
                           ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS is True,
                           the name is treated as a legacy/ephemeral
                           collection and allowed.
+
+    Access to every recognized collection is required; unknown names do not override a denial.
     """
     # Applied before the admin bypass — malformed names should never reach the vector store.
     safe_names = {n for n in collection_names if _is_safe_collection_name(n)}
@@ -1317,40 +1355,22 @@ async def filter_accessible_collections(
         return safe_names
 
     validated = set()
-    for name in safe_names:
-        if name == 'knowledge-bases':
-            # System meta-collection — never exposed to non-admins.
-            continue
-        elif name.startswith('file-'):
-            file_id = name[len('file-') :]
-            if await has_access_to_file(file_id=file_id, access_type=access_type, user=user):
-                validated.add(name)
-        elif name.startswith('user-memory-'):
-            if name == f'user-memory-{user.id}':
-                validated.add(name)
-        elif name.startswith('web-search-'):
-            # Ephemeral per-query collections, owner-bound: process_web_search mints
-            # them as web-search-{user.id}-<hash>, so only the creator may read/write.
-            if name.startswith(f'web-search-{user.id}-'):
-                validated.add(name)
-        else:
-            # May be a knowledge-base ID or a legacy/ephemeral collection.
-            # If it IS a KB, enforce access control.  If no such KB
-            # exists, the behaviour depends on
-            # ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS:
-            #   False (default) — deny (closes the unscoped namespace)
-            #   True  — allow (preserves legacy behaviour)
-            if await Knowledges.check_access_by_user_id(name, user.id, permission=access_type):
-                validated.add(name)
-            elif ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS and not await Knowledges.get_knowledge_by_id(name):
-                # Not a KB at all — legacy/ephemeral collection, allow
-                validated.add(name)
+    for collection_name in safe_names:
+        if await has_access_to_collection(collection_name, user, access_type):
+            validated.add(collection_name)
     return validated
 
 
 def filter_source_metadata(metadata: dict) -> dict:
-    """Keep only the chunk metadata keys the operator allowed the model to see."""
-    return {key: metadata[key] for key in RAG_SOURCE_METADATA_KEYS if metadata.get(key) is not None}
+    """Keep allowed metadata; expose uploaded-file pages as 1-based for the model."""
+    result = {key: metadata[key] for key in RAG_SOURCE_METADATA_KEYS if metadata.get(key) is not None}
+    if metadata.get('file_id') and not metadata.get('external'):
+        page = result.get('page')
+        if type(page) is float and page.is_integer():
+            page = int(page)
+        if type(page) is int and page >= 0:
+            result['page'] = page + 1
+    return result
 
 
 async def get_sources_from_items(
@@ -1421,7 +1441,7 @@ async def get_sources_from_items(
                     # Fallback to item content
                     query_result = {
                         'documents': [[item.get('content')]],
-                        'metadatas': [[{'file_id': item.get('id'), 'name': item.get('name')}]],
+                        'metadatas': [[{'name': item.get('name')}]],
                     }
 
         elif item.get('type') == 'note':
@@ -1440,8 +1460,20 @@ async def get_sources_from_items(
             ):
                 # User has access to the note
                 query_result = {
-                    'documents': [[note.data.get('content', {}).get('md', '')]],
-                    'metadatas': [[{'file_id': note.id, 'name': note.title}]],
+                    'documents': [[page['content'].get('md', '') for page in note.data['pages']]],
+                    'metadatas': [
+                        [
+                            {
+                                'file_id': note.id,
+                                'note_id': note.id,
+                                'page_id': page['id'],
+                                'parent_id': page.get('parent_id'),
+                                'name': f'{note.title} / {page["title"]}',
+                                'source': f'/notes/{note.id}?page={page["id"]}',
+                            }
+                            for page in note.data['pages']
+                        ]
+                    ],
                 }
 
         elif item.get('type') == 'chat':
@@ -1829,9 +1861,11 @@ class RerankCompressor(BaseDocumentCompressor):
         if reranking:
             scores = await asyncio.to_thread(self.reranking_function, query, documents)
         else:
-            query_embedding = await self.embedding_function(query, RAG_EMBEDDING_QUERY_PREFIX)
+            query_embedding = await self.embedding_function(query, await Config.get('rag.embedding_query_prefix'))
             doc_texts = [doc.page_content for doc in documents]
-            document_embedding = await self.embedding_function(doc_texts, RAG_EMBEDDING_CONTENT_PREFIX)
+            document_embedding = await self.embedding_function(
+                doc_texts, await Config.get('rag.embedding_content_prefix')
+            )
             scores = cosine_similarity(query_embedding, document_embedding)
 
         if scores is not None:

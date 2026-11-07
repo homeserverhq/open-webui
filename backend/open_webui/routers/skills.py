@@ -28,7 +28,7 @@ from open_webui.models.skills import (
     SkillUserResponse,
     get_skill_snapshot,
 )
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
+from open_webui.utils.access_control import filter_allowed_access_grants, has_permission, validate_access_grants
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.skill_files import (
     MAX_IMPORT_BYTES,
@@ -48,9 +48,7 @@ PAGE_ITEM_COUNT = 30
 router = APIRouter()
 
 
-############################
-# GetSkills
-############################
+# Get Skills
 
 
 @router.get('/', response_model=list[SkillUserResponse])
@@ -72,9 +70,7 @@ async def get_skills(
     return skills
 
 
-############################
-# GetSkillList
-############################
+# Get Skill List
 
 
 @router.get('/list', response_model=SkillAccessListResponse)
@@ -134,9 +130,7 @@ async def get_skill_list(
     )
 
 
-############################
-# ExportSkills
-############################
+# Export Skills
 
 
 async def authorized_skill(id, user, permission='read', db=None):
@@ -176,6 +170,8 @@ async def export_skills(
         raise HTTPException(403, 'Export permission required')
     if version_id and (not ids or len(ids) != 1):
         raise HTTPException(400, 'Select one skill to export a historical version')
+    if format == 'skill' and (not ids or len(ids) != 1):
+        raise HTTPException(400, 'Select one skill to export as .skill')
     skills = (
         [await authorized_skill(id, user, db=db) for id in ids]
         if ids is not None
@@ -195,22 +191,21 @@ async def export_skills(
             }
         )
     try:
-        if format == 'zip':
+        if format in ('zip', 'skill'):
+            filename = f'{skills[0].id}.skill' if format == 'skill' else 'skills.zip'
             return Response(
                 zip_export(packages),
                 media_type='application/zip',
-                headers={'Content-Disposition': 'attachment; filename="skills.zip"'},
+                headers={'Content-Disposition': f'attachment; filename="{filename}"'},
             )
         if format != 'json':
-            raise ValueError('Export format must be json or zip')
+            raise ValueError('Export format must be json, zip, or skill')
         return packages[0] if ids and len(ids) == 1 else packages
     except ValueError as error:
         raise HTTPException(400, str(error))
 
 
-############################
-# CreateNewSkill
-############################
+# Create New Skill
 
 
 @router.post('/create', response_model=Optional[SkillResponse])
@@ -258,7 +253,7 @@ async def create_new_skill(
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_skills',
+        resource_type='skill',
     )
 
     try:
@@ -287,9 +282,7 @@ async def create_new_skill(
         )
 
 
-############################
-# GetSkillById
-############################
+# Get Skill By Id
 
 
 @router.get('/id/{id}', response_model=Optional[SkillDetailResponse])
@@ -334,9 +327,7 @@ async def get_skill_by_id(id: str, user=Depends(get_verified_user), db: AsyncSes
         )
 
 
-############################
-# UpdateSkillById
-############################
+# Update Skill By Id
 
 
 @router.post('/id/{id}/update', response_model=Optional[SkillModel])
@@ -370,22 +361,9 @@ async def update_skill_by_id(
             detail=ERROR_MESSAGES.UNAUTHORIZED,
         )
 
-    # Strip public/user grants the requesting user is not permitted to assign
-    # (matches the channel/notes/calendar pattern). The access check above only
-    # restricts WHO can write to the skill; this filter restricts WHICH grants
-    # they may set, so a non-admin owner cannot make their own skill publicly
-    # readable/writable without sharing.public_skills permission.
-    form_data.access_grants = await filter_allowed_access_grants(
-        await Config.get('user.permissions'),
-        user.id,
-        user.role,
-        form_data.access_grants,
-        'sharing.public_skills',
-    )
-
     try:
         updated = {
-            **form_data.model_dump(exclude={'id'}, exclude_unset=True),
+            **form_data.model_dump(exclude={'id', 'access_grants'}, exclude_unset=True),
         }
 
         skill = await Skills.update_skill_by_id(id, updated, db=db, user_id=user.id)
@@ -413,9 +391,7 @@ async def update_skill_by_id(
         )
 
 
-############################
-# UpdateSkillAccessById
-############################
+# Update Skill Access By Id
 
 
 class SkillAccessGrantsForm(BaseModel):
@@ -453,12 +429,12 @@ async def update_skill_access_by_id(
             detail=ERROR_MESSAGES.UNAUTHORIZED,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
+    form_data.access_grants = await validate_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_skills',
+        resource_type='skill',
     )
 
     await AccessGrants.set_access_grants('skill', id, form_data.access_grants, db=db)
@@ -474,9 +450,7 @@ async def update_skill_access_by_id(
     return skill
 
 
-############################
-# ToggleSkillById
-############################
+# Toggle Skill By Id
 
 
 @router.post('/id/{id}/toggle', response_model=Optional[SkillModel])
@@ -527,9 +501,7 @@ async def toggle_skill_by_id(
         )
 
 
-############################
-# DeleteSkillById
-############################
+# Delete Skill By Id
 
 
 @router.delete('/id/{id}/delete', response_model=bool)

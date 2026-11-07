@@ -31,7 +31,7 @@ from open_webui.utils.tools import (
     set_terminal_servers,
     set_tool_servers,
 )
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 router = APIRouter()
 
@@ -86,11 +86,9 @@ def config_updates(data: dict, key_map: dict[str, str]) -> dict:
     return {key_map[field]: value for field, value in data.items() if field in key_map}
 
 
-############################
-# ImportConfig
-# Thy configuration come, thy settings be done,
-# in production as it is in development.
-############################
+# Import Config
+# Let what we prepare in quiet hold when the world grows loud,
+# and let those who depend on it find steadiness through change.
 
 
 class ImportConfigForm(BaseModel):
@@ -112,9 +110,7 @@ async def import_config(request: Request, form_data: ImportConfigForm, user=Depe
     return await Config.get_all()
 
 
-############################
-# ExportConfig
-############################
+# Export Config
 
 
 @router.get('/export', response_model=dict)
@@ -127,9 +123,25 @@ async def get_config_namespace(namespace: str, user=Depends(get_admin_user)):
     return await Config.get_namespace(namespace)
 
 
-############################
+class InterfaceVisibilityForm(BaseModel):
+    visibility: dict[str, StrictBool]
+
+
+@router.post('/interface/visibility', response_model=InterfaceVisibilityForm)
+async def set_interface_visibility(request: Request, form_data: InterfaceVisibilityForm, user=Depends(get_admin_user)):
+    await Config.upsert({'ui.visibility': form_data.visibility})
+    await publish_event(
+        request,
+        EVENTS.CONFIG_UPDATED,
+        actor=user,
+        subject_id='interface',
+        subject_type='config',
+        data={'keys': ['ui.visibility']},
+    )
+    return form_data
+
+
 # Connections Config
-############################
 
 
 class ConnectionsConfigForm(BaseModel):
@@ -214,9 +226,7 @@ async def register_oauth_client(
         )
 
 
-############################
 # ToolServers Config
-############################
 
 
 class ToolServerConnection(BaseModel):
@@ -700,9 +710,7 @@ async def verify_tool_servers_config(request: Request, form_data: ToolServerConn
         )
 
 
-############################
-# CodeInterpreterConfig
-############################
+# Code Interpreter Config
 class CodeInterpreterConfigForm(BaseModel):
     ENABLE_CODE_EXECUTION: bool
     CODE_EXECUTION_ENGINE: str
@@ -748,9 +756,7 @@ async def set_code_execution_config(
     return values
 
 
-############################
-# SetDefaultModels
-############################
+# Set Default Models
 class ModelsConfigForm(BaseModel):
     DEFAULT_MODELS: str | None
     DEFAULT_PINNED_MODELS: str | None
@@ -793,11 +799,27 @@ async def set_models_config(request: Request, form_data: ModelsConfigForm, user=
 class SubagentsConfigForm(BaseModel):
     ENABLE_SUBAGENTS: bool
     SUBAGENTS_BACKGROUND_ENABLED: bool
-    SUBAGENTS_MAX_CONCURRENT: int
-    SUBAGENTS_MAX_ASYNC: int
-    SUBAGENTS_MAX_ITERATIONS: int
-    SUBAGENTS_MAX_OUTPUT: int
+    SUBAGENTS_MAX_CONCURRENT: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_ASYNC: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_ITERATIONS: int | None = Field(default=None, gt=0)
+    SUBAGENTS_MAX_OUTPUT: int | None = Field(default=None, gt=0)
     SUBAGENTS_SYSTEM_PROMPT: str
+
+    @field_validator(
+        'SUBAGENTS_MAX_CONCURRENT',
+        'SUBAGENTS_MAX_ASYNC',
+        'SUBAGENTS_MAX_ITERATIONS',
+        'SUBAGENTS_MAX_OUTPUT',
+        mode='before',
+    )
+    @classmethod
+    def normalize_limit(cls, value):
+        return None if value in ('', 0) else value
+
+    @field_validator('SUBAGENTS_MAX_CONCURRENT', 'SUBAGENTS_MAX_ASYNC', mode='before')
+    @classmethod
+    def normalize_legacy_unlimited(cls, value):
+        return None if value == -1 else value
 
 
 @router.get('/subagents', response_model=SubagentsConfigForm)
@@ -860,9 +882,7 @@ async def set_default_suggestions(
     return {'suggestions': suggestions, 'i18n': suggestions_i18n}
 
 
-############################
-# SetBanners
-############################
+# Set Banners
 
 
 class SetBannersForm(BaseModel):

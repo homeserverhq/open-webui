@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 
 	import { socket, user } from '$lib/stores';
 
@@ -16,15 +17,17 @@
 
 	export let threadId = null;
 	export let channel = null;
+	export let chatInputElement = null;
 
 	export let onClose = () => {};
 	export let onPin = () => {};
 
 	let messages = null;
+	let searchAnchor = '';
+	let loading = null;
 	let top = false;
 
 	let messagesContainerElement = null;
-	let chatInputElement = null;
 
 	let replyToMessage = null;
 
@@ -32,7 +35,11 @@
 	let typingUsersTimeout = {};
 
 	$: if (threadId) {
-		initHandler();
+		initHandler(
+			$page.url.searchParams.get('thread') === threadId
+				? ($page.url.searchParams.get('message') ?? '')
+				: ''
+		);
 	}
 
 	const scrollToBottom = () => {
@@ -41,22 +48,40 @@
 		}
 	};
 
-	const initHandler = async () => {
+	const initHandler = async (anchor = '') => {
+		loading = null;
+		searchAnchor = anchor;
 		messages = null;
 		top = false;
+		replyToMessage = null;
 
 		typingUsers = [];
 		typingUsersTimeout = {};
 
 		if (channel) {
-			messages = await getChannelThreadMessages(localStorage.token, channel.id, threadId);
+			loading = getChannelThreadMessages(localStorage.token, channel.id, threadId, 0, 50, {
+				around: anchor
+			}).catch((error) => {
+				if (request === loading) toast.error(String(error));
+				return [];
+			});
+			const request = loading;
+			const loaded = await request;
+			if (request !== loading) return;
+			messages = loaded ?? [];
 
 			if (messages.length < 50) {
 				top = true;
 			}
 
 			await tick();
-			scrollToBottom();
+			if (anchor) {
+				const element = document.getElementById(`message-${threadId}-${anchor}`);
+				element?.scrollIntoView({ block: 'center' });
+				element?.animate([{ backgroundColor: '#a5a5c544' }, { backgroundColor: 'transparent' }], {
+					duration: 2200
+				});
+			} else scrollToBottom();
 		} else {
 			goto('/');
 		}
@@ -68,9 +93,15 @@
 			const type = event?.data?.type ?? null;
 			const data = event?.data?.data ?? null;
 
+			if (messages === null && type !== 'typing') {
+				const request = loading;
+				await request;
+				if (request !== loading) return;
+			}
+
 			if (type === 'message') {
 				if ((data?.parent_id ?? null) === threadId) {
-					if (messages) {
+					if (messages && !messages.some((message) => message.id === data.id)) {
 						messages = [{ ...data, temp_id: null }, ...messages];
 
 						if (typingUsers.find((user) => user.id === event.user.id)) {
@@ -187,22 +218,21 @@
 	});
 
 	onDestroy(() => {
+		loading = null;
 		$socket?.off('events:channel', channelEventHandler);
 	});
 </script>
 
 {#if channel}
 	<div class="flex flex-col w-full h-full bg-white dark:bg-gray-900">
-		<div
-			class="sticky top-0 flex min-h-10 items-center justify-between border-b border-gray-100/60 px-4 py-1.5 dark:border-gray-800/40"
-		>
+		<div class="sticky top-0 flex min-h-10 items-center justify-between px-4 py-1.5">
 			<div class=" font-medium text-sm">{$i18n.t('Thread')}</div>
 
 			<div>
 				<button
 					type="button"
 					aria-label={$i18n.t('Close')}
-					class="flex size-7 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-50/60 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-300"
+					class="flex h-7 items-center justify-center rounded-lg text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 px-0"
 					on:click={() => {
 						onClose();
 					}}
@@ -216,13 +246,19 @@
 			class="flex-1 min-h-0 w-full overflow-y-auto will-change-transform"
 			bind:this={messagesContainerElement}
 		>
-			<div class="pt-3">
+			<div>
+				{#if searchAnchor}<div class="px-3 py-2 text-xs text-gray-500 flex justify-between">
+						<span>{$i18n.t('Showing search match')}</span><button
+							class="underline"
+							on:click={() => initHandler()}>{$i18n.t('Latest replies')}</button
+						>
+					</div>{/if}
 				{#if messages !== null}
 					<Messages
 						id={threadId}
 						{channel}
 						{top}
-						{messages}
+						bind:messages
 						{replyToMessage}
 						thread={true}
 						{onPin}
@@ -237,10 +273,17 @@
 								localStorage.token,
 								channel.id,
 								threadId,
-								messages.length
+								searchAnchor ? 0 : messages.length,
+								50,
+								searchAnchor ? { before: messages[messages.length - 1]?.id } : {}
 							);
 
-							messages = [...messages, ...newMessages];
+							messages = [
+								...messages,
+								...newMessages.filter(
+									(item) => !messages.some((existing) => existing.id === item.id)
+								)
+							];
 
 							if (newMessages.length < 50) {
 								top = true;
@@ -258,6 +301,7 @@
 
 		<div class=" pb-3 px-3 w-full">
 			<MessageInput
+				{messages}
 				bind:replyToMessage
 				bind:chatInputElement
 				id={threadId}

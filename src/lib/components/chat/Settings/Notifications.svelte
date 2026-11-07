@@ -1,4 +1,5 @@
 <script lang="ts">
+	import UserSettingRow from './UserSettingRow.svelte';
 	import { canUseNotificationTargets } from '$lib/utils/settings-access';
 	import { getContext, onMount } from 'svelte';
 	import type { Writable } from 'svelte/store';
@@ -197,32 +198,34 @@
 		</h2>
 
 		<div class="flex flex-col gap-2.5">
-			<label class="flex cursor-pointer items-center justify-between">
-				<span class="text-xs text-gray-600 dark:text-gray-400">
+			<UserSettingRow let:labelId>
+				<span slot="label">
 					{$i18n.t('settings.personal.notifications.browserNotifications.label')}
 				</span>
 				<Switch
+					ariaLabelledbyId={labelId}
 					bind:state={notificationEnabled}
 					ariaLabel={$i18n.t('settings.personal.notifications.browserNotifications.label')}
 					on:change={toggleNotifications}
 				/>
-			</label>
+			</UserSettingRow>
 			<p class="-mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 				{$i18n.t('Allow browser notifications for completed responses.')}
 			</p>
 
-			<label class="flex cursor-pointer items-center justify-between">
-				<span class="text-xs text-gray-600 dark:text-gray-400">
+			<UserSettingRow let:labelId>
+				<span slot="label">
 					{$i18n.t('settings.personal.notifications.notificationSound.label')}
 				</span>
 				<Switch
+					ariaLabelledbyId={labelId}
 					bind:state={notificationSound}
 					ariaLabel={$i18n.t('settings.personal.notifications.notificationSound.label')}
 					on:change={() => {
 						saveSettings({ notificationSound });
 					}}
 				/>
-			</label>
+			</UserSettingRow>
 
 			{#if canUseWebhooks}
 				<div class="mt-3 flex items-center justify-between">
@@ -253,12 +256,15 @@
 								.filter((event) => target.events.includes(event.event))
 								.map((event) => $i18n.t(event.label))
 								.join(', ')}
-							<div class="flex items-center gap-3 px-1 py-1.5">
+							<div class="group/setting-row flex items-center gap-3 px-1 py-1.5">
 								<div class="min-w-0 flex-1">
 									<div class="flex min-w-0 items-center gap-2">
-										<span class="truncate text-[0.71875rem] text-gray-700 dark:text-gray-300">
+										<label
+											for={`notification-${target.id}-control`}
+											class="truncate text-[0.71875rem] text-gray-600 dark:text-gray-400 transition-colors duration-150 group-hover/setting-row:text-gray-900 group-focus-within/setting-row:text-gray-900 dark:group-hover/setting-row:text-white dark:group-focus-within/setting-row:text-white group-has-[button[id$=-control]:enabled]/setting-row:cursor-pointer group-has-[button[id$=-control]:disabled]/setting-row:cursor-not-allowed"
+										>
 											{target.id}
-										</span>
+										</label>
 										<span class="shrink-0 text-[0.625rem] text-gray-400 dark:text-gray-600">
 											{$i18n.t('Webhook')}
 										</span>
@@ -326,6 +332,7 @@
 
 								<div class="flex w-9 shrink-0 justify-end">
 									<Switch
+										id={`notification-${target.id}-control`}
 										state={target.enabled}
 										ariaLabel={$i18n.t('Enabled')}
 										on:change={(event) => patchTarget(target, { enabled: event.detail })}
@@ -343,7 +350,13 @@
 	</div>
 </div>
 
-<Modal size="sm" bind:show={formOpen}>
+<Modal
+	ariaLabel={editingId
+		? $i18n.t('Edit')
+		: $i18n.t('settings.personal.notifications.addNotificationTarget.label')}
+	size="sm"
+	bind:show={formOpen}
+>
 	<div class="p-4">
 		<h2 class="mb-3 text-sm font-medium text-gray-900 dark:text-white">
 			{editingId
@@ -351,10 +364,14 @@
 				: $i18n.t('settings.personal.notifications.addNotificationTarget.label')}
 		</h2>
 
-		<div class="text-[0.625rem] text-gray-400 dark:text-gray-600">
+		<label
+			for="notification-form-id"
+			class="block text-[0.625rem] text-gray-400 dark:text-gray-600"
+		>
 			{$i18n.t('Target ID for notify')}
-		</div>
+		</label>
 		<input
+			id="notification-form-id"
 			bind:value={form.id}
 			placeholder={$i18n.t('Target ID')}
 			autocomplete="off"
@@ -362,10 +379,14 @@
 			class="block w-full bg-transparent py-0.5 font-mono text-[0.8125rem] text-gray-700 outline-none placeholder:text-gray-300 dark:text-gray-300 dark:placeholder:text-gray-700"
 		/>
 
-		<div class="mt-2 text-[0.625rem] text-gray-400 dark:text-gray-600">
+		<label
+			for="notification-form-url"
+			class="block mt-2 text-[0.625rem] text-gray-400 dark:text-gray-600"
+		>
 			{$i18n.t('Webhook')}
-		</div>
+		</label>
 		<input
+			id="notification-form-url"
 			type="url"
 			bind:value={form.url}
 			placeholder={editingId

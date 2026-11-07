@@ -1,4 +1,7 @@
 <script lang="ts">
+	import type { CommentsRequest } from '$lib/components/comments/CommentsPanel.svelte';
+	export let onComment: (request: CommentsRequest) => void;
+	import CommentButton from '$lib/components/comments/CommentButton.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { getContext } from 'svelte';
 
@@ -16,7 +19,13 @@
 	import Pin from '$lib/components/icons/Pin.svelte';
 	import PinSlash from '$lib/components/icons/PinSlash.svelte';
 
-	import { config, user as currentUser, pinnedModels, settings } from '$lib/stores';
+	import {
+		config,
+		user as currentUser,
+		pinnedModels,
+		settings,
+		visibleControls
+	} from '$lib/stores';
 	import Link from '$lib/components/icons/Link.svelte';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 
@@ -82,6 +91,13 @@
 					<div class="flex items-center">{$i18n.t('Edit')}</div>
 				</button>
 			{/if}
+			<CommentButton
+				{onComment}
+				modal
+				menu
+				resource={{ resource_type: 'model', resource_id: model.id }}
+				onOpen={() => (show = false)}
+			/>
 			{#if accessHandler && writeAccess}
 				<button
 					type="button"
@@ -147,24 +163,26 @@
 				</button>
 			{/if}
 
-			<button
-				class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:text-gray-900 dark:hover:text-gray-100"
-				on:click={() => runAndClose(() => pinModelHandler(model?.id))}
-			>
-				{#if $pinnedModels.includes(model?.id)}
-					<PinSlash />
-				{:else}
-					<Pin />
-				{/if}
-
-				<div class="flex items-center">
+			{#if $visibleControls['models.pin']}
+				<button
+					class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:text-gray-900 dark:hover:text-gray-100"
+					on:click={() => runAndClose(() => pinModelHandler(model?.id))}
+				>
 					{#if $pinnedModels.includes(model?.id)}
-						{$i18n.t('Hide from Sidebar')}
+						<PinSlash />
 					{:else}
-						{$i18n.t('Keep in Sidebar')}
+						<Pin />
 					{/if}
-				</div>
-			</button>
+
+					<div class="flex items-center">
+						{#if $pinnedModels.includes(model?.id)}
+							{$i18n.t('Hide from Sidebar')}
+						{:else}
+							{$i18n.t('Keep in Sidebar')}
+						{/if}
+					</div>
+				</button>
+			{/if}
 
 			{#if writeAccess}
 				<button

@@ -7,7 +7,7 @@
 	import localizedFormat from 'dayjs/plugin/localizedFormat';
 
 	import { settings, chatId, WEBUI_NAME, models, config, user as sessionUser } from '$lib/stores';
-	import { convertMessagesToHistory, createMessagesList } from '$lib/utils';
+	import { convertMessagesToHistory, createMessagesList, getDeepestChildId } from '$lib/utils';
 
 	import { getChatByShareId, cloneSharedChatById, forkChatById } from '$lib/apis/chats';
 
@@ -48,23 +48,30 @@
 		$sessionUser &&
 		($sessionUser.role === 'admin' || ($sessionUser.permissions?.chat?.import ?? true));
 
+	// Reading history here would rerun this on every history change.
 	$: if ($page.params.id) {
-		(async () => {
-			if (await loadSharedChat()) {
-				loaded = true;
-				await tick();
-				messagesComponent?.scrollToBottom();
-			} else if (localStorage.token) {
-				await goto('/');
-			} else {
-				await goto(`/auth?redirect=${encodeURIComponent($page.url.pathname)}`);
-			}
-		})();
+		loadAndScroll();
 	}
 
-	//////////////////////////
 	// Web functions
-	//////////////////////////
+
+	const loadAndScroll = async () => {
+		if (await loadSharedChat()) {
+			loaded = true;
+			await tick();
+			const target = $page.url.searchParams.get('message');
+			if (target && history.messages[target]) {
+				autoScroll = false;
+				history.currentId = getDeepestChildId(history, target);
+				await tick();
+				await messagesComponent?.scrollToMessage(target);
+			} else messagesComponent?.scrollToBottom();
+		} else if (localStorage.token) {
+			await goto('/');
+		} else {
+			await goto(`/auth?redirect=${encodeURIComponent($page.url.pathname)}`);
+		}
+	};
 
 	const loadSharedChat = async () => {
 		const token = localStorage.token ?? '';
@@ -109,7 +116,7 @@
 		chat = await getChatByShareId(token, shareId).catch(() => null);
 
 		if (chat?.chat?.share_mode === 'continue' && chat.id !== shareId) {
-			await goto(`/c/${chat.id}`, { replaceState: true });
+			await goto(`/c/${chat.id}${$page.url.search}`, { replaceState: true });
 			return true;
 		}
 

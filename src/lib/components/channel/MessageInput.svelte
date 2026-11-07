@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MessageComposerShell from '$lib/components/common/MessageComposerShell.svelte';
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 
@@ -7,12 +8,28 @@
 
 	const i18n: any = getContext('i18n');
 
-	import { channelRequestQueues, config, mobile, settings, socket, user } from '$lib/stores';
+	import {
+		channelRequestQueues,
+		channels,
+		models,
+		config,
+		mobile,
+		settings,
+		socket,
+		user
+	} from '$lib/stores';
 	import { processingQueueChannels, processNextInQueue } from '$lib/utils/channelQueue';
+	import {
+		getMentionUserQueries,
+		resolveMentions,
+		getChannelMentionCandidates
+	} from '$lib/utils/channelMentions';
+	import type { Editor } from '@tiptap/core';
 	import QueuedMessageItem from '../chat/MessageInput/QueuedMessageItem.svelte';
 	import {
 		convertHeicToJpeg,
 		isHeicImage,
+		normalizeImageFile,
 		compressImage,
 		extractInputVariables,
 		getAge,
@@ -50,6 +67,7 @@
 
 	export let id: string | null = null;
 	export let channel: any = null;
+	export let messages: any[] | null = [];
 
 	export let typingUsers = [];
 	export let inputLoading = false;
@@ -74,9 +92,11 @@
 
 	let loaded = false;
 	let draggedOver = false;
+	let shiftKey = false;
 
 	let recording = false;
 	let content = '';
+	let inputEditor: Editor | null = null;
 	let files: any[] = [];
 	let isDestroyed = false;
 	$: parentId = id === 'root' ? null : id;
@@ -160,6 +180,14 @@
 
 			if (email) {
 				text = text.replaceAll('{{USER_EMAIL}}', email);
+			}
+		}
+
+		if (text.includes('{{USER_ROLE}}')) {
+			const role = sessionUser?.role || '';
+
+			if (role) {
+				text = text.replaceAll('{{USER_ROLE}}', role);
 			}
 		}
 
@@ -385,6 +413,7 @@
 				return;
 			}
 
+			file = await normalizeImageFile(file);
 			const image = file.type.startsWith('image/') || isHeicImage(file);
 			uploadFileHandler(file, !image, image);
 		});
@@ -394,7 +423,7 @@
 		const compressImageHandler = async (imageUrl: string, settings: any = {}, config: any = {}) => {
 			// Quick shortcut so we don’t do unnecessary work.
 			const settingsCompression =
-				(settings?.imageCompression && settings?.imageCompressionInChannels) ?? false;
+				(settings?.imageCompression ?? false) && (settings?.imageCompressionInChannels ?? true);
 			const configWidth = config?.file?.image_compression?.width ?? null;
 			const configHeight = config?.file?.image_compression?.height ?? null;
 
@@ -525,9 +554,23 @@
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			shiftKey = true;
+		}
+
 		if (event.key === 'Escape') {
 			draggedOver = false;
 		}
+	};
+
+	const handleKeyUp = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			shiftKey = false;
+		}
+	};
+
+	const handleBlur = () => {
+		shiftKey = false;
 	};
 
 	const onDragOver = (e: DragEvent) => {
@@ -579,10 +622,43 @@
 		void processNextInQueue(queueKey);
 	};
 
+	const resolveInputMentions = async () => {
+		const targetQueueKey = queueKey;
+		const editor = inputEditor;
+		if (editor && /[@#]/.test(content)) {
+			const state = editor.state;
+			try {
+				const candidates = await getChannelMentionCandidates(
+					localStorage.token,
+					channel.id,
+					getMentionUserQueries(state.doc),
+					{
+						users: userSuggestions,
+						apps: $config?.features?.enable_apps ?? false,
+						models: $models,
+						channels: channelSuggestions ? $channels : []
+					}
+				);
+				if (isDestroyed || targetQueueKey !== queueKey || editor.isDestroyed) return false;
+				const tr = resolveMentions(state, candidates);
+				// A paste lookup may have finished while Send was waiting for the same result.
+				if (editor.state.doc.eq(tr.doc)) return true;
+				if (editor.state.doc !== state.doc) return false;
+				if (tr.docChanged) editor.view.dispatch(tr);
+			} catch (error) {
+				toast.error(`${error}`);
+				return false;
+			}
+		}
+		return true;
+	};
+
 	const submitHandler = async () => {
 		if (disabled || !$user?.id || (content === '' && files.length === 0)) return;
 
 		const targetQueueKey = queueKey;
+		if (inputEditor && /[@#]/.test(content) && !(await resolveInputMentions())) return;
+		if (content === '' && files.length === 0) return;
 		const entry = {
 			id: uuidv4(),
 			prompt: content,
@@ -624,7 +700,8 @@
 		}
 
 		await tick();
-		if (!isDestroyed && targetQueueKey === queueKey) chatInputElement?.focus();
+		if (!isDestroyed && targetQueueKey === queueKey)
+			chatInputElement?.focus({ preventScroll: true });
 	};
 
 	$: if (content) {
@@ -660,6 +737,24 @@
 				: []),
 			{
 				char: '/',
+				command: ({ editor, range, props }) => {
+					if (props?.type === 'prompt') {
+						void insertTextAtCursor(props.content ?? '');
+						return;
+					}
+
+					editor
+						.chain()
+						.focus()
+						.insertContentAt(range, [
+							{
+								type: 'mention',
+								attrs: { ...props, mentionSuggestionChar: '/' }
+							},
+							{ type: 'text', text: ' ' }
+						])
+						.run();
+				},
 				render: getSuggestionRenderer(CommandSuggestionList, {
 					i18n,
 					onSelect: (e) => {
@@ -723,6 +818,8 @@
 		}, 100);
 
 		window.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('keyup', handleKeyUp);
+		window.addEventListener('blur', handleBlur);
 
 		let dropzoneElement: HTMLElement | null = null;
 		const initialize = async () => {
@@ -743,6 +840,8 @@
 			isDestroyed = true;
 
 			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('keyup', handleKeyUp);
+			window.removeEventListener('blur', handleBlur);
 
 			if (dropzoneElement) {
 				dropzoneElement.removeEventListener('dragover', onDragOver);
@@ -892,11 +991,7 @@
 								{/each}
 							</div>
 						{/if}
-						<div
-							id="message-input-container"
-							class="flex-1 flex flex-col relative w-full shadow-sm rounded-2xl border border-gray-100/60 dark:border-gray-800/50 hover:border-gray-100 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition bg-white dark:bg-gray-400/5 dark:text-gray-100"
-							dir={$settings?.chatDirection ?? 'auto'}
-						>
+						<MessageComposerShell id="message-input-container">
 							{#if replyToMessage !== null}
 								<div class="px-3 pt-2 text-left w-full flex flex-col z-10">
 									<div class="flex items-center justify-between w-full">
@@ -913,7 +1008,7 @@
 										</div>
 										<div>
 											<button
-												class="flex size-6 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-gray-400"
+												class="flex h-6 shrink-0 items-center justify-center rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 px-0"
 												aria-label={$i18n.t('Cancel')}
 												type="button"
 												on:click={() => {
@@ -998,6 +1093,7 @@
 											id="chat-input"
 											className="input-prose min-h-fit h-full text-sm!"
 											bind:this={chatInputElement}
+											bind:editor={inputEditor}
 											json={true}
 											messageInput={true}
 											editable={!disabled}
@@ -1011,9 +1107,10 @@
 													navigator.maxTouchPoints > 0 ||
 													navigator.msMaxTouchPoints > 0
 												)}
-											largeTextAsFile={$settings?.largeTextAsFile ?? false}
+											largeTextAsFile={($settings?.largeTextAsFile ?? false) && !shiftKey}
 											floatingMenuPlacement={'top-start'}
 											{suggestions}
+											on:pasted={resolveInputMentions}
 											onChange={(e) => {
 												const { md } = e;
 												content = md;
@@ -1021,12 +1118,40 @@
 											}}
 											on:keydown={async (e) => {
 												e = e.detail.event;
+												// IME confirmation must finish before a shortcut can send and clear the editor.
+												if (e.isComposing || e.keyCode === 229 || inputEditor?.view.composing)
+													return;
+
 												const isCtrlPressed = e.ctrlKey || e.metaKey; // metaKey is for Cmd key on Mac
 
 												const suggestionsContainerElement =
 													document.getElementById('suggestions-container');
 
 												if (!suggestionsContainerElement) {
+													if (
+														e.key === 'ArrowUp' &&
+														!e.isComposing &&
+														!isCtrlPressed &&
+														!e.shiftKey &&
+														!e.altKey &&
+														!disabled &&
+														content === '' &&
+														files.length === 0
+													) {
+														const message = messages?.find(
+															(message) => message.user_id === $user?.id && !message.temp_id
+														);
+														if (message) {
+															const messageId = parentId ? `${parentId}-${message.id}` : message.id;
+															const editButton = document.getElementById(
+																`edit-message-${messageId}`
+															);
+															if (editButton) {
+																e.preventDefault();
+																editButton.click();
+															}
+														}
+													}
 													if (
 														!$mobile ||
 														!(
@@ -1064,7 +1189,7 @@
 												if (clipboardData && clipboardData.items) {
 													for (const item of clipboardData.items) {
 														if (item.type === 'text/plain') {
-															if ($settings?.largeTextAsFile ?? false) {
+															if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
 																const text = clipboardData.getData('text/plain');
 
 																if (text.length > PASTED_TEXT_CHARACTER_LIMIT) {
@@ -1231,7 +1356,7 @@
 									</div>
 								</div>
 							</div>
-						</div>
+						</MessageComposerShell>
 					</form>
 				{/if}
 			</div>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '$lib/utils/codemirror';
+	import { toast } from 'svelte-sonner';
 	import { basicSetup, EditorView } from 'codemirror';
 	import { keymap, placeholder as editorPlaceholder } from '@codemirror/view';
 	import { Compartment, EditorState } from '@codemirror/state';
@@ -29,6 +30,15 @@
 	let editorReadOnly = new Compartment();
 	let internalValue = '';
 	let lastSearchTargetRequestId = 0;
+
+	export const getSelection = () => {
+		if (!editor || editor.state.selection.main.empty) return undefined;
+		const { from, to } = editor.state.selection.main;
+		return {
+			text: editor.state.sliceDoc(from, to),
+			location: `Lines ${editor.state.doc.lineAt(from).number}–${editor.state.doc.lineAt(to).number}`
+		};
+	};
 
 	/** Return the current editor content */
 	export const getValue = (): string => {
@@ -62,14 +72,18 @@
 		editor.focus();
 	};
 
+	let languageGeneration = 0;
 	const detectLanguage = async (path: string | null) => {
-		if (!path) return;
-		const match = LanguageDescription.matchFilename(languages, path);
-		if (match) {
-			const lang = await match.load();
-			if (lang && editor) {
-				editor.dispatch({ effects: editorLanguage.reconfigure(lang) });
+		const version = ++languageGeneration;
+		const match = path ? LanguageDescription.matchFilename(languages, path) : null;
+		editor?.dispatch({ effects: editorLanguage.reconfigure([]) });
+		try {
+			const language = await match?.load();
+			if (version === languageGeneration && editor && language) {
+				editor.dispatch({ effects: editorLanguage.reconfigure(language) });
 			}
+		} catch {
+			// Keep the file editable if a language chunk cannot be loaded.
 		}
 	};
 
@@ -92,7 +106,7 @@
 	}
 
 	// React to filePath changes for language detection
-	$: if (editor && filePath) {
+	$: if (editor) {
 		detectLanguage(filePath);
 	}
 
@@ -112,7 +126,7 @@
 					key: 'Mod-s',
 					run: () => {
 						if (onSave && !readOnly) {
-							onSave(editor?.state.doc.toString() ?? '');
+							void onSave(editor?.state.doc.toString() ?? '').catch((e) => toast.error(String(e)));
 						}
 						return true;
 					}
@@ -149,7 +163,6 @@
 			parent: container
 		});
 
-		detectLanguage(filePath);
 		revealSearchTarget();
 
 		// Watch dark mode

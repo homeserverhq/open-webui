@@ -18,6 +18,8 @@
 	export let accessGrants: AccessGrant[] = [];
 	export let accessControl: any = undefined;
 	export let accessRoles = ['read'];
+	export let labels: Partial<Record<'title' | 'public' | 'private' | 'read' | 'empty', string>> =
+		{};
 
 	export let share = true;
 	export let sharePublic = true;
@@ -28,14 +30,20 @@
 	export let onChange: (grants: AccessGrant[]) => void | Promise<void> = () => {};
 </script>
 
-<Modal size="sm" bind:show className="rounded-2xl bg-white dark:bg-gray-900">
+<Modal
+	ariaLabel={labels.title ?? $i18n.t('Access Control')}
+	size="sm"
+	bind:show
+	className="rounded-2xl bg-white dark:bg-gray-900"
+>
 	<div>
 		<div class="flex justify-between dark:text-gray-100 px-4 pt-3 pb-2">
 			<div class="text-sm font-medium self-center">
-				{$i18n.t('Access Control')}
+				{labels.title ?? $i18n.t('Access Control')}
 			</div>
 			<button
-				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+				aria-label={$i18n.t('Close')}
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				on:click={() => {
 					show = false;
 				}}
@@ -50,6 +58,7 @@
 				bind:accessControl
 				{onChange}
 				{accessRoles}
+				{labels}
 				{share}
 				{sharePublic}
 				{shareOpen}

@@ -41,7 +41,8 @@ from open_webui.models.knowledge import Knowledges
 from open_webui.models.users import Users
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
 from open_webui.routers.audio import transcribe
-from open_webui.routers.retrieval import ProcessFileForm, process_file
+from open_webui.routers.knowledge import check_knowledge_upload_limits
+from open_webui.routers.retrieval import ProcessFileForm, index_file, process_file
 from open_webui.storage.provider import Storage
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import strict_match_mime_type
@@ -56,11 +57,9 @@ router = APIRouter()
 from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.json_codec import JSONCodec
 
-############################
 # Upload File
 # What was entrusted here was given in good faith. Let it
 # be returned the same way, whole and undiminished.
-############################
 
 
 def _is_text_file(file_path: str, chunk_size: int = 8192) -> bool:
@@ -136,6 +135,15 @@ async def process_uploaded_file(
 ):
     async def _process_handler(db_session):
         try:
+            if file_metadata.get('knowledge_id'):
+                await check_knowledge_upload_limits(
+                    file_metadata['knowledge_id'],
+                    1,
+                    file_size=(file_item.meta or {}).get('size'),
+                    exclude_file_ids=[file_item.id],
+                    db=db_session,
+                )
+            await Files.update_file_data_by_id(file_item.id, {'status': 'processing'}, db=db_session)
             content_type = file.content_type
 
             # Detect mis-labeled text files (e.g. .ts → video/mp2t)
@@ -158,7 +166,7 @@ async def process_uploaded_file(
                     file_metadata,
                     user,
                 )
-                await process_file(
+                await index_file(
                     request,
                     ProcessFileForm(file_id=file_item.id, content=result.get('text', '')),
                     user=user,
@@ -173,16 +181,8 @@ async def process_uploaded_file(
                 )
             ):
                 if content_type.startswith('video/'):
-                    # Videos are stored as-is for downstream multimodal
-                    # processing (Tools, vision models). Attempting text
-                    # extraction causes "Timeout reached while detecting
-                    # encoding" errors.
+                    # Keep videos for multimodal processing; text extraction can time out detecting their encoding.
                     log.info('Video file detected (%s), skipping text extraction', content_type)
-                    await Files.update_file_data_by_id(
-                        file_item.id,
-                        {'status': 'completed'},
-                        db=db_session,
-                    )
                 else:
                     raise Exception(f'File type {content_type} is not supported for processing')
 
@@ -191,7 +191,7 @@ async def process_uploaded_file(
                 # configured content extraction engine.
                 if not content_type:
                     log.info('File type %s is not provided, but trying to process anyway', file.content_type)
-                await process_file(
+                await index_file(
                     request,
                     ProcessFileForm(file_id=file_item.id),
                     user=user,
@@ -233,15 +233,6 @@ async def process_uploaded_file(
                                 )
                                 directory_id = None
 
-                        # Keep the generic file status stream open until the
-                        # KB-specific vector write and durable link both finish.
-                        await Files.update_file_data_by_id(file_item.id, {'status': 'processing'}, db=db_session)
-                        await process_file(
-                            request,
-                            ProcessFileForm(file_id=file_item.id, collection_name=knowledge_id),
-                            user=user,
-                            db=db_session,
-                        )
                         knowledge_file = await Knowledges.add_file_to_knowledge_by_id(
                             knowledge_id=knowledge_id,
                             file_id=file_item.id,
@@ -251,10 +242,23 @@ async def process_uploaded_file(
                         )
                         if not knowledge_file:
                             raise Exception(f'Failed to link file {file_item.id} to knowledge {knowledge_id}')
+                        try:
+                            await index_file(
+                                request,
+                                ProcessFileForm(file_id=file_item.id, collection_name=knowledge_id),
+                                user=user,
+                                db=db_session,
+                            )
+                        except Exception:
+                            await Knowledges.remove_file_from_knowledge_by_id(knowledge_id, file_item.id, db=db_session)
+                            raise
                         log.info('Linked file %s to knowledge %s', file_item.id, knowledge_id)
                 except Exception as e:
                     log.warning(f'Failed to link file {file_item.id} to knowledge {knowledge_id}: {e}')
                     raise
+
+            # Completion includes the durable knowledge link, when requested.
+            await Files.update_file_data_by_id(file_item.id, {'status': 'completed', 'error': None}, db=db_session)
 
         except Exception as e:
             log.error(f'Error processing file: {file_item.id}')
@@ -361,6 +365,19 @@ async def upload_file_handler(
                     detail=ERROR_MESSAGES.DEFAULT(f'File type {file_extension} is not allowed'),
                 )
 
+        knowledge_id = file_metadata.get('knowledge_id')
+        if knowledge_id:
+            knowledge = await Knowledges.get_knowledge_by_id(knowledge_id, db=db)
+            if not knowledge or not (
+                knowledge.user_id == user.id
+                or user.role == 'admin'
+                or await AccessGrants.has_access(
+                    user_id=user.id, resource_type='knowledge', resource_id=knowledge_id, permission='write', db=db
+                )
+            ):
+                raise HTTPException(403, ERROR_MESSAGES.ACCESS_PROHIBITED)
+            await check_knowledge_upload_limits(knowledge_id, 1, batch=True, file_size=file.size, db=db)
+
         # Prefer readable storage names for admins, but fall back if the filesystem rejects it.
         id = str(uuid.uuid4())
         name = filename
@@ -398,6 +415,13 @@ async def upload_file_handler(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{max_size} MB'),
             )
+
+        if knowledge_id:
+            try:
+                await check_knowledge_upload_limits(knowledge_id, 0, file_size=len(contents), db=db)
+            except HTTPException:
+                await asyncio.to_thread(Storage.delete_file, file_path)
+                raise
 
         # SHA-256 of raw uploaded bytes for incremental sync diffing.
         # If the client pre-computed and sent file_hash, use that.
@@ -478,9 +502,7 @@ async def upload_file_handler(
         )
 
 
-############################
 # List Files
-############################
 
 
 PAGE_SIZE = 50
@@ -506,9 +528,16 @@ async def list_files(
     return result
 
 
-############################
 # Search Files
-############################
+
+
+async def _search_files(filename: str, content: bool, skip: int, limit: int, user_id: str | None, db: AsyncSession):
+    files = await Files.search_files(user_id=user_id, filename=filename, skip=skip, limit=limit, db=db)
+    if not content:
+        for file in files:
+            if file.data and 'content' in file.data:
+                del file.data['content']
+    return files
 
 
 @router.get('/search', response_model=list[FileModelResponse])
@@ -523,39 +552,29 @@ async def search_files(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    """
-    Search for files by filename with support for wildcard patterns.
-    Uses SQL-based filtering with pagination for better performance.
-    """
-    # Determine user_id: null for admin with bypass (search all), user.id otherwise
     user_id = None if (user.role == 'admin' and BYPASS_ADMIN_ACCESS_CONTROL) else user.id
-
-    # Use optimized database query with pagination
-    files = await Files.search_files(
-        user_id=user_id,
-        filename=filename,
-        skip=skip,
-        limit=limit,
-        db=db,
-    )
-
+    files = await _search_files(filename, content, skip, limit, user_id, db)
     if not files:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No files found matching the pattern.',
         )
-
-    if not content:
-        for file in files:
-            if file.data and 'content' in file.data:
-                del file.data['content']
-
     return files
 
 
-############################
+@router.get('/user/search', response_model=list[FileModelResponse])
+async def search_user_files(
+    filename: str = Query('*'),
+    content: bool = Query(False),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=1000),
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    return await _search_files(filename, content, skip, limit, user.id, db)
+
+
 # Count Files
-############################
 
 
 @router.get('/count', response_model=int)
@@ -567,9 +586,15 @@ async def count_files(
     return await Files.count_files_by_user_id(user_id=user_id, db=db)
 
 
-############################
+@router.get('/user/count', response_model=int)
+async def count_user_files(
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    return await Files.count_files_by_user_id(user_id=user.id, db=db)
+
+
 # Delete All Files
-############################
 
 
 @router.delete('/all')
@@ -597,9 +622,7 @@ async def delete_all_files(
         )
 
 
-############################
 # Get File By Id
-############################
 
 
 @router.get('/{id}', response_model=Optional[FileModel])
@@ -627,10 +650,7 @@ async def get_file_process_status(
     stream: bool = Query(False),
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations manage their own short-lived sessions internally.
-    # Holding a session here would keep a connection for the entire stream
-    # (up to two hours) and exhaust the connection pool under concurrent load.
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
     file = await Files.get_file_by_id(id)
 
     if not file:
@@ -680,9 +700,7 @@ async def get_file_process_status(
         )
 
 
-############################
 # Get File Data Content By Id
-############################
 
 
 @router.get('/{id}/data/content')
@@ -706,9 +724,7 @@ async def get_file_data_content_by_id(
         )
 
 
-############################
 # Update File Data Content By Id
-############################
 
 
 class ContentForm(BaseModel):
@@ -732,6 +748,9 @@ async def update_file_data_content_by_id(
         )
 
     if file.user_id == user.id or user.role == 'admin' or await has_access_to_file(id, 'write', user, db=db):
+        if not form_data.content.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.EMPTY_CONTENT)
+
         max_size = await Config.get('rag.file.max_size')
         if max_size and len(form_data.content.encode('utf-8')) > int(max_size) * 1024 * 1024:
             raise HTTPException(
@@ -797,9 +816,7 @@ async def update_file_data_content_by_id(
         )
 
 
-############################
 # Get File Content By Id
-############################
 
 
 @router.get('/{id}/content')
@@ -967,9 +984,7 @@ async def get_file_content_by_id(
         )
 
 
-############################
 # Rename File By Id
-############################
 
 
 class FileRenameForm(BaseModel):
@@ -1015,9 +1030,7 @@ async def rename_file_by_id(
         )
 
 
-############################
 # Delete File By Id
-############################
 
 
 @router.delete('/{id}')

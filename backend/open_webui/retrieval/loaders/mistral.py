@@ -34,6 +34,7 @@ class MistralLoader:
         max_retries: int = 3,
         enable_debug_logging: bool = False,
         use_base64: bool = False,
+        params: Optional[Dict[str, Any]] = None,
         user: Optional[Any] = None,
     ):
         """
@@ -46,6 +47,7 @@ class MistralLoader:
             max_retries: Maximum number of retry attempts.
             enable_debug_logging: Enable detailed debug logs.
             use_base64: Send the document as a data URL instead of uploading it first.
+            params: Extra fields merged into the OCR request, overriding the defaults (e.g. model).
             user: The requesting user, forwarded to Mistral via user-info headers
                 when ENABLE_FORWARD_USER_INFO_HEADERS is enabled.
         """
@@ -60,9 +62,10 @@ class MistralLoader:
         self.max_retries = max_retries
         self.debug = enable_debug_logging
         self.use_base64 = use_base64
+        self.params = params or {}
         self.user = user
 
-        # PERFORMANCE OPTIMIZATION: Differentiated timeouts for different operations
+        # Use separate timeouts for different operations.
         # This prevents long-running OCR operations from affecting quick operations
         # and improves user experience by failing fast on operations that should be quick
         self.upload_timeout = min(timeout, 120)  # Cap upload at 2 minutes - prevents hanging on large files
@@ -70,12 +73,12 @@ class MistralLoader:
         self.ocr_timeout = timeout  # OCR can take the full timeout - this is the heavy operation
         self.cleanup_timeout = 30  # Cleanup should be quick - don't hang on file deletion
 
-        # PERFORMANCE OPTIMIZATION: Pre-compute file info to avoid repeated filesystem calls
+        # Precompute file info to avoid repeated filesystem calls.
         # This avoids multiple os.path.basename() and os.path.getsize() calls during processing
         self.file_name = os.path.basename(file_path)
         self.file_size = os.path.getsize(file_path)
 
-        # ENHANCEMENT: Added User-Agent for better API tracking and debugging
+        # Include User-Agent for API tracking and debugging.
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
             'User-Agent': 'OpenWebUI-MistralLoader/2.0',  # Helps API provider track usage
@@ -158,7 +161,7 @@ class MistralLoader:
                 if attempt == self.max_retries - 1 or not self._is_retryable_error(e):
                     raise
 
-                # PERFORMANCE OPTIMIZATION: Exponential backoff with cap
+                # Cap exponential backoff between retries.
                 # Prevents overwhelming the server while ensuring reasonable retry delays
                 wait_time = min((2**attempt) + 0.5, 30)  # Cap at 30 seconds
                 log.warning(
@@ -179,7 +182,7 @@ class MistralLoader:
         url = f'{self.base_url}/files'
 
         def upload_request():
-            # MEMORY OPTIMIZATION: Use context manager to minimize file handle lifetime
+            # Limit the file handle's lifetime with a context manager.
             # This ensures the file is closed immediately after reading, reducing memory usage
             with open(self.file_path, 'rb') as f:
                 files = {'file': (self.file_name, f, 'application/pdf')}
@@ -247,6 +250,7 @@ class MistralLoader:
                 'document_url': signed_url,
             },
             'include_image_base64': False,
+            **self.params,
         }
 
         def ocr_request():

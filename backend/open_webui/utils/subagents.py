@@ -17,7 +17,8 @@ from open_webui.models.users import UserModel, Users
 from open_webui.tasks import create_task, has_active_tasks
 from open_webui.utils.auth import VERIFIED_USER_ROLES, create_token
 from open_webui.utils.json_codec import JSONCodec
-from open_webui.utils.misc import add_or_update_system_message, get_message_list
+from open_webui.utils.misc import add_or_update_system_message, get_message_list, is_raster_image_content_type
+from open_webui.utils.models import get_filtered_models
 from open_webui.utils.tool_search import strip_deferred_tools_manifest
 from starlette.datastructures import Headers
 
@@ -43,6 +44,22 @@ _background_active: set[str] = set()
 _background_lock = asyncio.Lock()
 _foreground_semaphore: asyncio.Semaphore | None = None
 _parent_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+async def get_subagent_models(request: Request, user: UserModel, model: dict) -> list[dict]:
+    subagents = (model.get('info', {}).get('meta') or {}).get('subagents') or {}
+    model_ids = subagents.get('model_ids') or []
+    if not model_ids:
+        return []
+    candidates = [model for model_id, model in request.app.state.MODELS.items() if model_id in model_ids]
+    return [
+        {
+            'id': model['id'],
+            'name': model.get('name', model['id']),
+            'description': (model.get('info', {}).get('meta') or {}).get('description') or '',
+        }
+        for model in await get_filtered_models(candidates, user)
+    ]
 
 
 async def _build_request(source: Request, user_id: str, *, internal: bool) -> Request:
@@ -282,6 +299,7 @@ async def delegate(
     background: bool,
     *,
     file_ids: list[str] | None = None,
+    model_id: str | None = None,
     request: Request,
     user_data: dict,
     metadata: dict,
@@ -304,13 +322,21 @@ async def delegate(
         'subagents.max_output',
         'subagents.system_prompt',
     )
-    max_concurrent = int(config.get('subagents.max_concurrent') or 20)
-    max_async = int(config.get('subagents.max_async') or 20)
-    max_iterations = int(config.get('subagents.max_iterations') or 30)
-    max_output = int(config.get('subagents.max_output') or 30_000)
-    if max_concurrent != -1:
+    max_concurrent = config.get('subagents.max_concurrent')
+    max_concurrent = int(max_concurrent) if max_concurrent else None
+    max_async = config.get('subagents.max_async')
+    max_async = int(max_async) if max_async else None
+    max_iterations = config.get('subagents.max_iterations')
+    max_iterations = int(max_iterations) if max_iterations else None
+    max_output = config.get('subagents.max_output')
+    max_output = int(max_output) if max_output else None
+    if max_concurrent == -1:
+        max_concurrent = None
+    elif max_concurrent is not None:
         max_concurrent = max(1, max_concurrent)
-    if max_async != -1:
+    if max_async == -1:
+        max_async = None
+    elif max_async is not None:
         max_async = max(1, max_async)
 
     if background and not config.get('subagents.background_enabled'):
@@ -343,42 +369,58 @@ async def delegate(
         return 'Error: model context is required.'
     if run.get('direct'):
         return 'Error: sub-agents are unavailable for direct connections.'
+    if model_id:
+        available_models = await get_subagent_models(request, UserModel(**user_data), metadata.get('model') or {})
+        available_ids = [model['id'] for model in available_models]
+        if model_id not in available_ids:
+            return (
+                f'Error: model {model_id} is not available for sub-agents. '
+                f'Available models: {", ".join(available_ids) or "none"}. '
+                'Omit model_id to use the current model.'
+            )
+    model_id = model_id or run['model_id']
+    delegated_files = []
     if file_ids:
         requested_file_ids = {str(file_id) for file_id in file_ids if file_id}
-        run['files'] = [
-            copy.deepcopy(file)
-            for file in metadata.get('files') or []
-            if str(file.get('id') or '') in requested_file_ids
-            or str(file.get('url') or '') in requested_file_ids
-            or (isinstance(file.get('file'), dict) and str(file.get('file', {}).get('id') or '') in requested_file_ids)
+        chat_messages = await Chats.get_messages_map_by_chat_id(parent_chat_id) or {}
+        # Photos are left out of the request's files, so also look on the chat's messages.
+        attached_files = [
+            *(metadata.get('files') or []),
+            *(
+                file
+                for message in chat_messages.values()
+                if message.get('role') == 'user'
+                for file in message.get('files') or []
+                if file.get('type') == 'image' or is_raster_image_content_type(file.get('content_type'))
+            ),
         ]
-        found_file_ids = {
-            str(value)
-            for file in run['files']
-            for value in (
-                file.get('id'),
-                file.get('url'),
-                file.get('file', {}).get('id') if isinstance(file.get('file'), dict) else None,
-            )
-            if value
-        }
+        found_file_ids = set()
+        for file in attached_files:
+            nested_file = file.get('file') if isinstance(file.get('file'), dict) else {}
+            keys = {str(value) for value in (file.get('id'), file.get('url'), nested_file.get('id')) if value}
+            if keys & requested_file_ids and not keys & found_file_ids:
+                delegated_files.append(copy.deepcopy(file))
+                found_file_ids |= keys
         missing_file_ids = sorted(requested_file_ids - found_file_ids)
         if missing_file_ids:
             return f'Error: file_ids not attached or unavailable: {", ".join(missing_file_ids)}'
-    else:
-        run['files'] = []
+    run['files'] = [
+        file
+        for file in delegated_files
+        if file.get('type') != 'image' and not is_raster_image_content_type(file.get('content_type'))
+    ]
 
     delegation_id = f'deleg_{uuid4().hex[:8]}'
     foreground_semaphore = None
     if background:
         async with _background_lock:
-            if max_async != -1 and len(_background_active) >= max_async:
+            if max_async is not None and len(_background_active) >= max_async:
                 return (
                     f'Error: Async subagent capacity reached ({max_async} running). '
                     'Wait for one to finish or increase subagents.max_async.'
                 )
             _background_active.add(delegation_id)
-    elif max_concurrent != -1:
+    elif max_concurrent is not None:
         if _foreground_semaphore is None:
             _foreground_semaphore = asyncio.Semaphore(max_concurrent)
         foreground_semaphore = _foreground_semaphore
@@ -391,7 +433,7 @@ async def delegate(
         user_message_id = str(uuid4())
         assistant_message_id = str(uuid4())
         prompt = f'{task}\n\n## Context\n{context}' if context else task
-        prompt_files = copy.deepcopy(run.get('files') or [])
+        prompt_files = delegated_files
         user_message = {
             'id': user_message_id,
             'parentId': None,
@@ -399,7 +441,7 @@ async def delegate(
             'role': 'user',
             'content': prompt,
             'timestamp': int(time.time()),
-            'models': [run['model_id']],
+            'models': [model_id],
             **({'files': prompt_files} if prompt_files else {}),
         }
         chat = await Chats.insert_new_chat(
@@ -409,7 +451,7 @@ async def delegate(
                 chat={
                     'id': chat_id,
                     'title': f'Sub-agent: {task[:60]}',
-                    'models': [run['model_id']],
+                    'models': [model_id],
                     'history': {
                         'currentId': assistant_message_id,
                         'messages': {
@@ -421,7 +463,7 @@ async def delegate(
                                 'role': 'assistant',
                                 'content': '',
                                 'done': False,
-                                'model': run['model_id'],
+                                'model': model_id,
                                 'timestamp': int(time.time()),
                             },
                         },
@@ -466,7 +508,7 @@ async def delegate(
                 str(config.get('subagents.system_prompt') or '').strip() or DEFAULT_SUBAGENT_SYSTEM_PROMPT
             )
             form_data = {
-                'model': run['model_id'],
+                'model': model_id,
                 'params': chat_context.get('params') or {},
                 'messages': add_or_update_system_message(
                     subagent_system_prompt,
@@ -517,9 +559,11 @@ async def delegate(
                     for part in item.get('content') or []
                     if part.get('type') == 'output_text'
                 )
-            if len(summary) > max_output:
+            if max_output is not None and len(summary) > max_output:
                 summary = f'{summary[:max_output]}\n\n[output truncated]'
             error = message.get('error')
+            if isinstance(error, dict):
+                error = error.get('content') or 'Sub-agent failed.'
             return {
                 'status': 'error' if error else 'completed',
                 'summary': summary or ('Sub-agent produced no output.' if not error else ''),
@@ -707,5 +751,8 @@ async def delegate(
         return f'Error: {exc}'
 
     if result.get('status') != 'completed':
-        return f'Error: {result.get("error") or "sub-agent failed."}'
+        error_text = f'Error: {result.get("error") or "sub-agent failed."}'
+        if result.get('summary'):
+            return f'{error_text}\nPartial output:\n{result["summary"]}'
+        return error_text
     return result.get('summary') or 'Sub-agent produced no output.'

@@ -11,7 +11,7 @@
 	import { getFileById, getFileContentById } from '$lib/apis/files';
 
 	import CodeBlock from '$lib/components/chat/Messages/CodeBlock.svelte';
-	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
+	import MarkdownDocument from '$lib/components/chat/FileNav/MarkdownDocument.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -72,7 +72,7 @@
 
 	$: isMarkdown =
 		item?.meta?.content_type === 'text/markdown' ||
-		(item?.name && item?.name.toLowerCase().endsWith('.md'));
+		(item?.name && /\.(md|markdown|mdx)$/i.test(item.name));
 
 	$: isCode =
 		item?.name &&
@@ -246,36 +246,30 @@
 		loadContent();
 	}
 
+	$: enableFullContent = item?.context === 'full';
+
 	onMount(() => {
 		console.log(item);
-		if (item?.context === 'full') {
-			enableFullContent = true;
-		}
 	});
 </script>
 
-<Modal bind:show size="lg">
+<Modal ariaLabel={item?.name ?? $i18n.t('File')} bind:show size="lg">
 	<div class=" px-4.5 py-3.5 w-full flex flex-col justify-center dark:text-gray-400">
 		<div class=" pb-2">
 			<div class="flex items-start justify-between">
 				<div>
 					<div class=" font-normal text-lg dark:text-gray-100">
 						<a
-							href="#"
+							href={item?.type === 'file'
+								? item?.url?.startsWith('http')
+									? item.url
+									: `${WEBUI_API_BASE_URL}/files/${item?.id ?? item?.tempId}/content`
+								: item?.type === 'collection' && item?.id
+									? `/workspace/knowledge/${item.id}`
+									: safeLinkUrl(item?.url)}
+							target="_blank"
+							rel="noreferrer"
 							class="hover:underline line-clamp-1"
-							on:click|preventDefault={() => {
-								if (item.type === 'file' || safeLinkUrl(item.url)) {
-									let fileId = item?.id ?? item?.tempId;
-									window.open(
-										item.type === 'file'
-											? item?.url?.startsWith('http')
-												? item.url
-												: `${WEBUI_API_BASE_URL}/files/${fileId}/content`
-											: item.url,
-										'_blank'
-									);
-								}
-							}}
 						>
 							{item?.name ?? 'File'}
 						</a>
@@ -284,6 +278,7 @@
 
 				<div>
 					<button
+						aria-label={$i18n.t('Close')}
 						on:click={() => {
 							show = false;
 						}}
@@ -422,6 +417,7 @@
 						<div class="absolute top-2 right-2 z-10">
 							<Tooltip content={$i18n.t('Reset view')}>
 								<button
+									aria-label={$i18n.t('Reset view')}
 									class="p-1.5 rounded-lg bg-white/80 dark:bg-gray-850/80 backdrop-blur-sm shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition text-gray-500 dark:text-gray-400"
 									on:click={resetImageView}
 								>
@@ -447,10 +443,8 @@
 							rawContent.length > CONTENT_PREVIEW_LIMIT &&
 							!expandedContent}
 						{#if $settings?.renderMarkdownInPreviews ?? true}
-							<div
-								class="max-h-96 overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-							>
-								<Markdown
+							<div class="max-h-96 overflow-scroll scrollbar-hidden">
+								<MarkdownDocument
 									content={isTruncated ? rawContent.slice(0, CONTENT_PREVIEW_LIMIT) : rawContent}
 									id="file-preview"
 								/>
@@ -479,10 +473,8 @@
 							rawContent.length > CONTENT_PREVIEW_LIMIT &&
 							!expandedContent}
 						{#if $settings?.renderMarkdownInPreviews ?? true}
-							<div
-								class="max-h-96 overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-							>
-								<Markdown
+							<div class="max-h-96 overflow-scroll scrollbar-hidden">
+								<MarkdownDocument
 									content={isTruncated ? rawContent.slice(0, CONTENT_PREVIEW_LIMIT) : rawContent}
 									id="file-preview-content"
 								/>
@@ -562,10 +554,8 @@
 							/>
 						</div>
 					{:else if isMarkdown}
-						<div
-							class="max-h-[60vh] overflow-scroll scrollbar-hidden text-sm prose dark:prose-invert max-w-full"
-						>
-							<Markdown content={item.file.data.content} id="markdown-viewer" />
+						<div class="max-h-[60vh] overflow-scroll scrollbar-hidden">
+							<MarkdownDocument content={item.file.data.content} id="markdown-viewer" />
 						</div>
 					{:else if isDocx}
 						{#if docxError}
@@ -605,52 +595,3 @@
 		</div>
 	</div>
 </Modal>
-
-<style>
-	:global(.excel-table-container table) {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-		line-height: 1.25rem;
-	}
-
-	:global(.excel-table-container table td),
-	:global(.excel-table-container table th) {
-		border-width: 1px;
-		border-style: solid;
-		border-color: var(--color-gray-300, #cdcdcd);
-		padding: 0.5rem 0.75rem;
-		text-align: left;
-	}
-
-	:global(.dark .excel-table-container table td),
-	:global(.dark .excel-table-container table th) {
-		border-color: var(--color-gray-600, #676767);
-	}
-
-	:global(.excel-table-container table th) {
-		background-color: var(--color-gray-100, #ececec);
-		font-weight: 600;
-	}
-
-	:global(.dark .excel-table-container table th) {
-		background-color: var(--color-gray-800, #333);
-		color: var(--color-gray-100, #ececec);
-	}
-
-	:global(.excel-table-container table tr:nth-child(even)) {
-		background-color: var(--color-gray-50, #f9f9f9);
-	}
-
-	:global(.dark .excel-table-container table tr:nth-child(even)) {
-		background-color: rgba(38, 38, 38, 0.5);
-	}
-
-	:global(.excel-table-container table tr:hover) {
-		background-color: var(--color-gray-100, #ececec);
-	}
-
-	:global(.dark .excel-table-container table tr:hover) {
-		background-color: rgba(51, 51, 51, 0.5);
-	}
-</style>

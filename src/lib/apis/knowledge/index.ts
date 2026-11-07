@@ -1,10 +1,35 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
+type KnowledgeMeta = {
+	max_file_count: number | null;
+	max_file_size: number | null;
+};
+
+export const validateKnowledgeUpload = async (
+	token: string,
+	id: string,
+	count: number,
+	removedFileIds: string[] = [],
+	fileSize?: number
+) => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/knowledge/${id}/files/validate`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ count, removed_file_ids: removedFileIds, file_size: fileSize })
+	});
+	if (!res.ok) throw (await res.json()).detail;
+	return res.json();
+};
+
 export const createNewKnowledge = async (
 	token: string,
 	name: string,
 	description: string,
-	accessGrants: object[]
+	accessGrants: object[],
+	meta?: KnowledgeMeta
 ) => {
 	let error = null;
 
@@ -18,7 +43,8 @@ export const createNewKnowledge = async (
 		body: JSON.stringify({
 			name: name,
 			description: description,
-			access_grants: accessGrants
+			access_grants: accessGrants,
+			meta: meta
 		})
 	})
 		.then(async (res) => {
@@ -288,7 +314,7 @@ export const updateExternalKnowledgeSource = async (token: string, id: string, p
 			'Content-Type': 'application/json',
 			authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(payload)
+		body: JSON.stringify({ ...payload, access_grants: undefined })
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
@@ -605,10 +631,10 @@ export const streamPendingKnowledgeFiles = async (token: string, id: string) => 
 };
 
 type KnowledgeUpdateForm = {
+	meta?: KnowledgeMeta;
 	name?: string;
 	description?: string;
 	data?: object;
-	access_grants?: object[];
 };
 
 export const updateKnowledgeById = async (token: string, id: string, form: KnowledgeUpdateForm) => {
@@ -625,7 +651,7 @@ export const updateKnowledgeById = async (token: string, id: string, form: Knowl
 			name: form?.name ? form.name : undefined,
 			description: form?.description ? form.description : undefined,
 			data: form?.data ? form.data : undefined,
-			access_grants: form.access_grants
+			meta: form.meta
 		})
 	})
 		.then(async (res) => {
@@ -1012,7 +1038,7 @@ export const exportKnowledgeById = async (token: string, id: string) => {
 	return res;
 };
 
-// ── Directory API ───────────────────────────────────────────────────
+// Directory API
 
 export const createKnowledgeDirectory = async (
 	token: string,

@@ -12,6 +12,35 @@
 
 	const i18n = getContext<typeof import('$lib/i18n').default>('i18n');
 
+	// Only these prompt-defined attributes may reach DOM inputs.
+	const ALLOWED_INPUT_ATTRIBUTES = new Set([
+		'aria-describedby',
+		'aria-description',
+		'aria-label',
+		'aria-labelledby',
+		'autocapitalize',
+		'autocomplete',
+		'autocorrect',
+		'dir',
+		'disabled',
+		'enterkeyhint',
+		'inputmode',
+		'lang',
+		'max',
+		'maxlength',
+		'min',
+		'minlength',
+		'multiple',
+		'pattern',
+		'placeholder',
+		'readonly',
+		'required',
+		'size',
+		'spellcheck',
+		'step',
+		'title'
+	]);
+
 	export let show = false;
 	export let variables = {};
 	export let title: string | undefined = undefined;
@@ -77,14 +106,15 @@
 	}
 </script>
 
-<Modal bind:show size="md">
+<Modal ariaLabel={title ?? $i18n.t('Input Variables')} bind:show size="md">
 	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
 			<div class=" text-sm font-medium self-center">
 				{title ?? $i18n.t('Input Variables')}
 			</div>
 			<button
-				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+				aria-label={$i18n.t('Close')}
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				on:click={() => {
 					show = false;
 				}}
@@ -105,7 +135,11 @@
 						{#if !loading}
 							<div class="flex flex-col gap-1">
 								{#each Object.keys(variables) as variable, idx}
-									{@const { type, ...variableAttributes } = variables[variable] ?? {}}
+									{@const variableAttributes = Object.fromEntries(
+										Object.entries(variables[variable] ?? {}).filter(([name]) =>
+											ALLOWED_INPUT_ATTRIBUTES.has(name)
+										)
+									)}
 
 									<div class=" py-0.5 w-full justify-between">
 										<div class="flex w-full justify-between mb-1.5">

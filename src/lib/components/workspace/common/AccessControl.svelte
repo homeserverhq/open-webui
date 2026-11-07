@@ -17,6 +17,7 @@
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import AddAccessModal from './AddAccessModal.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ProfilePreview from '$lib/components/channel/Messages/Message/ProfilePreview.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 
 	type AccessGrant = {
@@ -32,8 +33,11 @@
 	};
 
 	export let onChange: Function = () => {};
+	let saving = false;
 
 	export let accessRoles = ['read'];
+	export let labels: Partial<Record<'title' | 'public' | 'private' | 'read' | 'empty', string>> =
+		{};
 	export let accessGrants: AccessGrant[] | any = [];
 	export let accessControl: any = undefined;
 
@@ -52,9 +56,9 @@
 	let showAddAccessModal = false;
 	$: visibility = getVisibility(accessGrants ?? []);
 	$: visibilityOptions = [
-		{ value: 'private' as const, label: $i18n.t('Private') },
+		{ value: 'private' as const, label: labels.private ?? $i18n.t('Private') },
 		...((share && sharePublic) || hasPublicReadGrant(accessGrants ?? [])
-			? [{ value: 'public' as const, label: $i18n.t('Public') }]
+			? [{ value: 'public' as const, label: labels.public ?? $i18n.t('Public') }]
 			: []),
 		...((share && shareOpen) || hasAnyoneReadGrant(accessGrants ?? [])
 			? [{ value: 'open' as const, label: $i18n.t('Open') }]
@@ -224,9 +228,15 @@
 				grant.permission === permission
 		);
 
-	const commitAccessGrants = (nextGrants: AccessGrant[]) => {
+	const commitAccessGrants = async (nextGrants: AccessGrant[]) => {
+		if (saving) return;
+		saving = true;
 		accessGrants = dedupeAccessGrants(nextGrants);
-		onChange(accessGrants);
+		try {
+			await onChange(accessGrants);
+		} finally {
+			saving = false;
+		}
 	};
 
 	const getVisibility = (grants: AccessGrant[]): 'private' | 'public' | 'open' => {
@@ -490,7 +500,7 @@
 	onAdd={handleAddAccess}
 />
 
-<div class="flex flex-col gap-2">
+<div class="flex flex-col gap-2" inert={saving} aria-busy={saving}>
 	<div class="-mx-1 rounded-xl bg-gray-50/60 px-3 py-2 dark:bg-white/[0.03]">
 		<Tooltip
 			content={!(share && sharePublic) && visibility === 'private'
@@ -500,7 +510,6 @@
 			<Dropdown closeOnSelect>
 				<button
 					type="button"
-					aria-label={$i18n.t('Visibility')}
 					class="flex h-6 items-center gap-2 rounded-md text-[0.8125rem] font-medium text-gray-800 transition hover:text-gray-950 dark:text-gray-200 dark:hover:text-white"
 				>
 					{#if visibility === 'private'}
@@ -508,6 +517,7 @@
 					{:else}
 						<GlobeAlt className="size-3.5 text-gray-500 dark:text-gray-400" />
 					{/if}
+					<span class="sr-only">{labels.title ?? $i18n.t('Visibility')}</span>
 					<span>{visibilityOptions.find((option) => option.value === visibility)?.label}</span>
 					<ChevronDown className="size-3 text-gray-400 dark:text-gray-500" strokeWidth="2" />
 				</button>
@@ -551,6 +561,7 @@
 				</div>
 				<Switch
 					state={hasPublicWriteGrant(accessGrants ?? [])}
+					ariaLabel={$i18n.t('Allow public write access')}
 					on:change={() => {
 						togglePublicWrite();
 					}}
@@ -622,11 +633,12 @@
 								<option value="write">{$i18n.t('Write')}</option>
 							</select>
 						{:else}
-							<Badge type={'info'} content={$i18n.t('Read')} />
+							<Badge type={'info'} content={labels.read ?? $i18n.t('Read')} />
 						{/if}
 
 						<button
-							class="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+							aria-label={$i18n.t('Remove {{name}}', { name: group.name })}
+							class="rounded-full py-1 transition hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 							type="button"
 							on:click={() => {
 								removePrincipal('group', group.id);
@@ -645,16 +657,14 @@
 						class="flex items-center gap-2 justify-between text-sm w-full transition border-b border-gray-50/50 dark:border-gray-850/50 pb-1.5 last:border-0"
 					>
 						<div class="flex items-center gap-2 min-w-0 flex-1">
-							<img
-								class="rounded-full size-5 object-cover"
-								src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`}
-								alt={user.name ?? user.id}
-							/>
-							<div class="min-w-0 flex-1">
-								<Tooltip content={user.email} placement="top-start">
-									<div class="truncate text-sm">{user.name ?? user.id}</div>
-								</Tooltip>
-							</div>
+							<ProfilePreview {user}>
+								<img
+									class="rounded-full size-5 object-cover shrink-0"
+									src={`${WEBUI_API_BASE_URL}/users/${user.id}/profile/image`}
+									alt=""
+								/>
+							</ProfilePreview>
+							<span class="min-w-0 truncate text-sm">{user.name ?? user.id}</span>
 						</div>
 
 						<div class="flex justify-end items-center gap-1.5 shrink-0">
@@ -676,11 +686,12 @@
 									<option value="write">{$i18n.t('Write')}</option>
 								</select>
 							{:else}
-								<Badge type={'info'} content={$i18n.t('Read')} />
+								<Badge type={'info'} content={labels.read ?? $i18n.t('Read')} />
 							{/if}
 
 							<button
-								class="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+								aria-label={$i18n.t('Remove {{name}}', { name: user.name ?? user.id })}
+								class="rounded-full py-1 transition hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 								type="button"
 								on:click={() => {
 									removePrincipal('user', user.id);
@@ -695,7 +706,7 @@
 
 			{#if getVisibility(accessGrants ?? []) === 'private' && accessGroups.length === 0 && selectedUsers.length === 0}
 				<div class="text-xs text-gray-500 text-center py-3">
-					{$i18n.t('No access grants. Private to you.')}
+					{labels.empty ?? $i18n.t('No access grants. Private to you.')}
 				</div>
 			{/if}
 		</div>

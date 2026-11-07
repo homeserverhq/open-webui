@@ -107,7 +107,7 @@
 
 		const scriptTags: string[] = [];
 
-		// --- Alpine.js detection & injection ---
+		// Alpine.js detection & injection
 		const hasAlpineDirectives = alpineDirectives.some((dir) => html.includes(dir));
 		if (hasAlpineDirectives) {
 			try {
@@ -121,7 +121,7 @@
 			}
 		}
 
-		// --- Chart.js detection & injection ---
+		// Chart.js detection & injection
 		const chartJsDirectives = ['new Chart(', 'Chart.'];
 		const hasChartJsDirectives = chartJsDirectives.some((dir) => html.includes(dir));
 		if (hasChartJsDirectives) {
@@ -207,7 +207,11 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 
 		// if arguments are provided, inject them into the iframe window
 		if (args && iframe?.contentWindow) {
-			(iframe.contentWindow as any).args = args;
+			try {
+				(iframe.contentWindow as any).args = args;
+			} catch {
+				// Cross-origin → args cannot be injected
+			}
 		}
 	};
 

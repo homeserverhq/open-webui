@@ -1,10 +1,42 @@
 import { get } from 'svelte/store';
 import { config } from '$lib/stores';
+import { checkSourceSize, readSourceResponse } from './sourceText';
+// The same attachment is used by @mentions, terminal uploads, and Files-pane requests.
+export type FilesystemFile = {
+	type: 'filesystem';
+	id: string;
+	path: string;
+	url: string;
+	name: string;
+	status: string;
+	size?: number;
+	modified?: number;
+	terminal_id?: string;
+	session_id?: string | null;
+};
+export const filesystemFile = (
+	entry: { path: string; name: string; size?: number; modified?: number },
+	terminalId: string,
+	sessionId: string | null
+): FilesystemFile => ({
+	type: 'filesystem',
+	id: entry.path,
+	path: entry.path,
+	url: entry.path,
+	name: entry.name,
+	size: entry.size,
+	modified: entry.modified,
+	status: 'processed',
+	terminal_id: terminalId,
+	session_id: sessionId
+});
+
 export type FileEntry = {
 	name: string;
 	type: 'file' | 'directory';
 	size?: number;
 	modified?: number;
+	created?: number | null;
 	writable?: boolean;
 };
 
@@ -49,7 +81,30 @@ export type ListeningPort = {
 
 export type TerminalFeatures = {
 	terminal?: boolean;
+	browser?: boolean;
+	desktop?: boolean;
+	git?: boolean;
+	events?: boolean;
 };
+
+// Missing flags mean unsupported; never probe a new endpoint on an older server.
+export async function getTerminalFeatures(
+	connection: TerminalConnection,
+	chatId: string | null,
+	signal?: AbortSignal
+): Promise<TerminalFeatures> {
+	try {
+		const result = await terminalRequest<{ features?: TerminalFeatures }>(
+			connection,
+			chatId,
+			'/api/config',
+			{ signal }
+		);
+		return result.features ?? {};
+	} catch {
+		return {};
+	}
+}
 
 export type TerminalFileRoot = {
 	path: string;
@@ -130,7 +185,16 @@ export const terminalRequest = async <T>(
 			...options.headers
 		}
 	});
-	if (!response.ok) throw new Error(`Terminal request failed (${response.status})`);
+	if (!response.ok) {
+		const body = await response.json().catch(() => null);
+		throw new Error(
+			typeof body?.detail === 'string'
+				? body.detail
+				: typeof body?.error === 'string'
+					? body.error
+					: `Terminal request failed (${response.status})`
+		);
+	}
 	return response.json();
 };
 
@@ -319,6 +383,27 @@ export const getFileMatches = async (
 	return Array.isArray(json?.results) ? json : null;
 };
 
+export const readComparisonSource = async (
+	baseUrl: string,
+	apiKey: string,
+	path: string,
+	signal: AbortSignal,
+	sessionId?: string,
+	size?: number
+): Promise<string> => {
+	checkSourceSize(size);
+	const headers = bearerHeaders(apiKey);
+	if (sessionId) headers['X-Session-Id'] = sessionId;
+	const response = await fetch(
+		`${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`,
+		{ headers, signal }
+	).catch(() => {
+		signal.throwIfAborted();
+		throw new Error('Could not read file. Check your terminal connection.');
+	});
+	return readSourceResponse(response, signal);
+};
+
 export const readFile = async (
 	baseUrl: string,
 	apiKey: string,
@@ -374,12 +459,13 @@ export const downloadFileBlob = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
+	const res = await fetch(url, { headers, signal }).catch(() => null);
 
 	if (!res || !res.ok) return null;
 
@@ -393,12 +479,13 @@ export const downloadFilePreview = async (
 	baseUrl: string,
 	apiKey: string,
 	path: string,
-	sessionId?: string
+	sessionId?: string,
+	signal?: AbortSignal
 ): Promise<{ blob: Blob; filename: string } | null> => {
 	const url = `${baseUrl.replace(/\/$/, '')}/files/view?path=${encodeURIComponent(path)}&preview=true`;
 	const headers: Record<string, string> = bearerHeaders(apiKey);
 	if (sessionId) headers['X-Session-Id'] = sessionId;
-	const res = await fetch(url, { headers }).catch(() => null);
+	const res = await fetch(url, { headers, signal }).catch(() => null);
 
 	if (!res) return null;
 	if (!res.ok) return null;
@@ -635,9 +722,7 @@ export const getPortProxyUrl = (baseUrl: string, port: number, path: string = ''
 	return `${baseUrl.replace(/\/$/, '')}/proxy/${port}/${path}`;
 };
 
-// ---------------------------------------------------------------------------
 // Notebook execution
-// ---------------------------------------------------------------------------
 
 export const createNotebookSession = async (
 	baseUrl: string,

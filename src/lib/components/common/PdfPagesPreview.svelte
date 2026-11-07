@@ -3,6 +3,7 @@
 	import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 	import Spinner from './Spinner.svelte';
 	import PDFViewer from './PDFViewer.svelte';
+	import type { FileComment, CommentResult } from '$lib/utils/comments/types';
 
 	export let data: ArrayBuffer | Uint8Array | null = null;
 	export let currentSlide = 0;
@@ -11,12 +12,19 @@
 	export let singlePage = false;
 	export let itemLabel = 'Page';
 	export let listLabel = 'Pages';
+	export let onComments: ((result: CommentResult) => void) | null = null;
+	export let onCommentsError: (() => void) | null = null;
+	export let onCommentSelect: ((comment: FileComment) => void) | null = null;
+	export let selectedComment: FileComment | null = null;
+	export let sourceComments: FileComment[] | null = null;
+	export let onAnchors: ((ids: string[]) => void) | null = null;
 
 	type PdfDocument = import('pdfjs-dist').PDFDocumentProxy;
 
 	let rootEl: HTMLDivElement;
 	let pdfViewerRef: PDFViewer;
 	let viewerData: ArrayBuffer | Uint8Array | null = null;
+	let loadedData: ArrayBuffer | Uint8Array | null = null;
 	let pageTarget: number | null = null;
 	let thumbsLoading = false;
 	let thumbnails: string[] = [];
@@ -95,10 +103,12 @@
 		}
 	};
 
-	$: if (data) {
+	$: if (data && data !== loadedData) {
+		loadedData = data;
 		viewerData = copyPdfData(data);
 		void loadThumbnails(copyPdfData(data));
-	} else {
+	} else if (!data) {
+		loadedData = null;
 		viewerData = null;
 		thumbnails = [];
 	}
@@ -192,6 +202,12 @@
 				{singlePage}
 				{itemLabel}
 				onPageChange={handlePageChange}
+				{onComments}
+				{onCommentsError}
+				{onCommentSelect}
+				{selectedComment}
+				{sourceComments}
+				{onAnchors}
 				className="w-full h-full"
 			/>
 		{:else}
@@ -203,36 +219,37 @@
 </div>
 
 <style>
-	.thumbnail-sidebar {
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar {
 		scrollbar-color: transparent transparent;
 	}
 
-	.thumbnail-sidebar:hover,
-	.thumbnail-sidebar:focus,
-	.thumbnail-sidebar:focus-within,
-	.thumbnail-sidebar:active {
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:hover,
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:focus,
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:focus-within,
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:active {
 		scrollbar-color: rgba(215, 215, 215, 0.6) transparent;
 	}
 
-	:global(.dark) .thumbnail-sidebar:hover,
-	:global(.dark) .thumbnail-sidebar:focus,
-	:global(.dark) .thumbnail-sidebar:focus-within,
-	:global(.dark) .thumbnail-sidebar:active {
+	:global(:where(html:not(.native-scrollbars)).dark) .thumbnail-sidebar:hover,
+	:global(:where(html:not(.native-scrollbars)).dark) .thumbnail-sidebar:focus,
+	:global(:where(html:not(.native-scrollbars)).dark) .thumbnail-sidebar:focus-within,
+	:global(:where(html:not(.native-scrollbars)).dark) .thumbnail-sidebar:active {
 		scrollbar-color: rgba(67, 67, 67, 0.6) transparent;
 	}
 
-	.thumbnail-sidebar::-webkit-scrollbar-thumb {
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar::-webkit-scrollbar-thumb {
 		visibility: hidden;
 	}
 
-	.thumbnail-sidebar:hover::-webkit-scrollbar-thumb,
-	.thumbnail-sidebar:focus::-webkit-scrollbar-thumb,
-	.thumbnail-sidebar:focus-within::-webkit-scrollbar-thumb,
-	.thumbnail-sidebar:active::-webkit-scrollbar-thumb {
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:hover::-webkit-scrollbar-thumb,
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:focus::-webkit-scrollbar-thumb,
+	:global(:where(html:not(.native-scrollbars)))
+		.thumbnail-sidebar:focus-within::-webkit-scrollbar-thumb,
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar:active::-webkit-scrollbar-thumb {
 		visibility: visible;
 	}
 
-	.thumbnail-sidebar::-webkit-scrollbar-corner {
+	:global(:where(html:not(.native-scrollbars))) .thumbnail-sidebar::-webkit-scrollbar-corner {
 		display: none;
 	}
 </style>

@@ -2,8 +2,6 @@
 	import { getContext, onDestroy } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { mobile } from '$lib/stores';
-	import { getKnowledgeById } from '$lib/apis/knowledge';
-	import { createFocusTrap } from 'focus-trap';
 	import Files from './Files.svelte';
 	import FileViewer from './FileViewer.svelte';
 	import AddContentMenu from './AddContentMenu.svelte';
@@ -74,18 +72,11 @@
 			selected = null;
 			state = newViewerState();
 		});
-	const changed = async (file?: KnowledgeFile, removed?: string[]) => {
+	const changed = (file?: KnowledgeFile, removed?: string[]) => {
 		if (file && file.id === selected?.id) selected = file;
 		else if (removed?.includes(selected?.id || '')) {
 			selected = null;
 			state = newViewerState();
-		} else if (!file && !removed && selected) {
-			const id = selected.id;
-			const result = await getKnowledgeById(localStorage.token, knowledge.id);
-			if (selected?.id === id && !result.files?.some((item: KnowledgeFile) => item.id === id)) {
-				selected = null;
-				state = newViewerState();
-			}
 		}
 	};
 	beforeNavigate((navigation) => {
@@ -97,11 +88,6 @@
 				goto(navigation.to!.url.href).finally(() => (allowNavigation = false));
 			});
 	});
-	const trapFocus = (node: HTMLElement) => {
-		const trap = createFocusTrap(node, { escapeDeactivates: false });
-		trap.activate();
-		return { destroy: () => trap.deactivate() };
-	};
 	onDestroy(() => clearTimeout(debounce));
 </script>
 
@@ -131,15 +117,12 @@
 			resizerId="knowledge-files-resizer">{@render sidebar()}</ResizableSidePanel
 		>{@render viewer()}{/if}
 </div>
-{#if $mobile}<Drawer show={drawerOpen} className="h-full" onRequestClose={close}
-		><div
-			class="h-full"
-			role="dialog"
-			aria-modal="true"
-			aria-label={$i18n.t('File preview')}
-			tabindex="-1"
-			use:trapFocus
-		>
+{#if $mobile}<Drawer
+		show={drawerOpen}
+		className="h-full"
+		ariaLabel={$i18n.t('File preview')}
+		onRequestClose={close}
+		><div class="h-full">
 			{@render viewer()}
 		</div></Drawer
 	>{/if}

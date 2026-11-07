@@ -23,7 +23,7 @@ from open_webui.models.prompts import (
     Prompts,
     PromptUserResponse,
 )
-from open_webui.utils.access_control import filter_allowed_access_grants, has_permission
+from open_webui.utils.access_control import filter_allowed_access_grants, has_permission, validate_access_grants
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,11 +44,9 @@ router = APIRouter()
 PAGE_ITEM_COUNT = 30
 
 
-############################
-# GetPrompts
+# Get Prompts
 # The hardest part is knowing what to ask. Let the right
 # question already be here when it is needed.
-############################
 
 
 @router.get('/', response_model=list[PromptModel])
@@ -135,9 +133,7 @@ async def get_prompt_list(
     )
 
 
-############################
-# CreateNewPrompt
-############################
+# Create New Prompt
 
 
 @router.post('/create', response_model=PromptModel | None)
@@ -171,7 +167,7 @@ async def create_new_prompt(
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_prompts',
+        resource_type='prompt',
     )
 
     prompt = await Prompts.get_prompt_by_command(form_data.command, db=db)
@@ -197,9 +193,7 @@ async def create_new_prompt(
     )
 
 
-############################
-# GetPromptById
-############################
+# Get Prompt By Id
 
 
 @router.get('/id/{prompt_id}', response_model=PromptAccessResponse | None)
@@ -241,9 +235,7 @@ async def get_prompt_by_id(
     )
 
 
-############################
-# UpdatePromptById
-############################
+# Update Prompt By Id
 
 
 @router.post('/id/{prompt_id}/update', response_model=PromptModel | None)
@@ -289,14 +281,6 @@ async def update_prompt_by_id(
                 detail=ERROR_MESSAGES.COMMAND_TAKEN,
             )
 
-    form_data.access_grants = await filter_allowed_access_grants(
-        await Config.get('user.permissions'),
-        user.id,
-        user.role,
-        form_data.access_grants,
-        'sharing.public_prompts',
-    )
-
     # Use the ID from the found prompt
     updated_prompt = await Prompts.update_prompt_by_id(prompt.id, form_data, user.id, db=db)
     if updated_prompt:
@@ -315,9 +299,7 @@ async def update_prompt_by_id(
         )
 
 
-############################
-# UpdatePromptMetadata
-############################
+# Update Prompt Metadata
 
 
 @router.post('/id/{prompt_id}/update/meta', response_model=PromptModel | None)
@@ -429,9 +411,7 @@ async def set_prompt_version(
         )
 
 
-############################
-# UpdatePromptAccessById
-############################
+# Update Prompt Access By Id
 
 
 class PromptAccessGrantsForm(BaseModel):
@@ -469,12 +449,12 @@ async def update_prompt_access_by_id(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    form_data.access_grants = await filter_allowed_access_grants(
+    form_data.access_grants = await validate_access_grants(
         await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,
-        'sharing.public_prompts',
+        resource_type='prompt',
     )
 
     await AccessGrants.set_access_grants('prompt', prompt_id, form_data.access_grants, db=db)
@@ -490,9 +470,7 @@ async def update_prompt_access_by_id(
     return updated_prompt
 
 
-############################
-# TogglePromptActiveById
-############################
+# Toggle Prompt Active By Id
 
 
 @router.post('/id/{prompt_id}/toggle', response_model=PromptModel | None)
@@ -543,9 +521,7 @@ async def toggle_prompt_active(
     )
 
 
-############################
-# DeletePromptById
-############################
+# Delete Prompt By Id
 
 
 @router.delete('/id/{prompt_id}/delete', response_model=bool)
@@ -591,9 +567,7 @@ async def delete_prompt_by_id(
     return result
 
 
-############################
 # Prompt History Endpoints
-############################
 
 
 @router.get('/id/{prompt_id}/history', response_model=list[PromptHistoryResponse])

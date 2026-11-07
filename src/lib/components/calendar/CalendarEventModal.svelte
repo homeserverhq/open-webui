@@ -22,6 +22,11 @@
 	export let defaultCalendarId: string = '';
 	export let defaultStartAt: number | null = null;
 
+	function close() {
+		show = false;
+		dispatch('close');
+	}
+
 	let title = '';
 	let description = '';
 	let calendarId = '';
@@ -142,7 +147,7 @@
 		loading = true;
 		try {
 			const startNs = dateTimeToNs(startDate, allDay ? '00:00' : startTime);
-			const endDays = overnight && !endsPastMidnight() ? 0 : endDayOffset;
+			const endDays = endsPastMidnight() ? Math.max(endDayOffset, 1) : overnight ? 0 : endDayOffset;
 			const shiftedEndDate = endDate
 				? nsToDateStr(dateTimeToNs(startDate, '12:00') + endDays * 24 * 60 * 60 * 1000 * NS)
 				: '';
@@ -170,7 +175,7 @@
 				if (result) {
 					toast.success($i18n.t('Event updated'));
 					dispatch('save', result);
-					show = false;
+					close();
 				}
 			} else {
 				const form: CalendarEventForm = {
@@ -188,7 +193,7 @@
 				if (result) {
 					toast.success($i18n.t('Event created'));
 					dispatch('save', result);
-					show = false;
+					close();
 				}
 			}
 		} catch (err) {
@@ -205,7 +210,7 @@
 			await deleteCalendarEvent(localStorage.token, event.id);
 			toast.success($i18n.t('Event deleted'));
 			dispatch('delete', event);
-			show = false;
+			close();
 		} catch (err) {
 			toast.error(`${err}`);
 		} finally {
@@ -214,7 +219,7 @@
 	};
 </script>
 
-<Modal size="md" bind:show>
+<Modal ariaLabel={title || $i18n.t('Event')} size="md" bind:show onRequestClose={close}>
 	<div>
 		<div class="dark:text-gray-100 px-4 pt-3 pb-1">
 			<input
@@ -222,14 +227,18 @@
 				type="text"
 				bind:value={title}
 				placeholder={$i18n.t('Event title')}
+				aria-label={$i18n.t('Event title')}
 			/>
 		</div>
 
 		<div class="px-4 pb-2 flex flex-col gap-2.5">
 			<!-- Calendar -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Calendar')}</div>
+				<div id="event-calendar-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Calendar')}
+				</div>
 				<select
+					aria-labelledby="event-calendar-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={calendarId}
 				>
@@ -247,18 +256,21 @@
 						type="date"
 						class="bg-transparent outline-hidden dark:scheme-dark"
 						bind:value={startDate}
+						aria-label={$i18n.t('Start date')}
 					/>
 					{#if !allDay}
 						<input
 							type="time"
 							class="bg-transparent outline-hidden dark:scheme-dark"
 							bind:value={startTime}
+							aria-label={$i18n.t('Start time')}
 						/>
 						<span class="text-gray-300 dark:text-gray-600">–</span>
 						<input
 							type="time"
 							class="bg-transparent outline-hidden dark:scheme-dark"
 							bind:value={endTime}
+							aria-label={$i18n.t('End time')}
 						/>
 					{/if}
 					<label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-400 ml-auto">
@@ -270,8 +282,11 @@
 
 			<!-- Location -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Location')}</div>
+				<div id="event-location-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Location')}
+				</div>
 				<input
+					aria-labelledby="event-location-label"
 					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 					placeholder={$i18n.t('Add location')}
 					bind:value={location}
@@ -280,8 +295,11 @@
 
 			<!-- Reminder -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Reminder')}</div>
+				<div id="event-reminder-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Reminder')}
+				</div>
 				<select
+					aria-labelledby="event-reminder-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={alertMinutes}
 				>
@@ -297,8 +315,9 @@
 
 			<!-- Repeat -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Repeat')}</div>
+				<div id="event-repeat-label" class="mb-1 text-xs text-gray-500">{$i18n.t('Repeat')}</div>
 				<select
+					aria-labelledby="event-repeat-label"
 					class="w-full text-sm bg-transparent outline-hidden cursor-pointer"
 					bind:value={repeatFrequency}
 				>
@@ -313,8 +332,11 @@
 
 			<!-- Description -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Description')}</div>
+				<div id="event-description-label" class="mb-1 text-xs text-gray-500">
+					{$i18n.t('Description')}
+				</div>
 				<textarea
+					aria-labelledby="event-description-label"
 					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700 resize-none min-h-[4rem]"
 					placeholder={$i18n.t('Add description')}
 					bind:value={description}
@@ -327,7 +349,7 @@
 			<div class="flex items-center gap-0.5 flex-1 min-w-0">
 				{#if event && !event.meta?.automation_id}
 					<button
-						class="px-3 py-1 text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 						type="button"
 						on:click={() => (showDeleteConfirmDialog = true)}
 						disabled={loading}
@@ -339,9 +361,9 @@
 
 			<div class="flex items-center gap-2 shrink-0">
 				<button
-					class="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition"
+					class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 					type="button"
-					on:click={() => (show = false)}
+					on:click={close}
 				>
 					{$i18n.t('Cancel')}
 				</button>

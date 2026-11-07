@@ -27,6 +27,7 @@ from loguru import logger
 from open_webui.env import AUDIT_INCLUDED_PATHS, AUDIT_LOG_LEVEL, ENABLE_AUDIT_GET_REQUESTS, MAX_BODY_LOG_SIZE
 from open_webui.models.users import UserModel
 from open_webui.utils.auth import get_current_user, get_http_authorization_cred
+from open_webui.utils.response import normalize_usage
 from starlette.requests import Request
 
 if TYPE_CHECKING:
@@ -43,6 +44,8 @@ class AuditLogEntry:
     request_uri: str
     user_agent: Optional[str] = None
     source_ip: Optional[str] = None
+    model_id: Optional[str] = None
+    usage: Optional[Dict[str, int]] = None
     # `Request` audit level properties
     request_object: Any = None
     # `Request Response` level
@@ -111,6 +114,31 @@ class AuditContext:
     def add_response_chunk(self, chunk: bytes):
         if len(self.response_body) < self.max_body_size:
             self.response_body.extend(chunk[: self.max_body_size - len(self.response_body)])
+
+
+def log_model_usage(request: Request, user: UserModel, model_id: str, usage: Optional[Dict]):
+    """Write a model call's usage separately from its originating HTTP request."""
+    request_id = getattr(request.state, 'audit_request_id', None)
+    if not request_id or not usage:
+        return
+    try:
+        usage = normalize_usage(usage)
+        AuditLogger(logger).write(
+            AuditLogEntry(
+                id=str(uuid.uuid4()),
+                user=user.model_dump(include={'id', 'name', 'email', 'role'}),
+                audit_level=request.state.audit_level,
+                verb=request.method,
+                request_uri=str(request.url),
+                source_ip=request.client.host if request.client else None,
+                user_agent=request.headers.get('user-agent'),
+                model_id=model_id,
+                usage={key: usage[key] for key in ('input_tokens', 'output_tokens', 'total_tokens') if key in usage},
+            ),
+            extra={'event': 'model_usage', 'request_id': request_id},
+        )
+    except Exception as e:
+        logger.error('Failed to log model usage: {}', e)
 
 
 def redact_passwords(body: str) -> str:
@@ -184,6 +212,8 @@ class AuditLoggingMiddleware:
         if self._should_skip_auditing(request):
             return await self.app(scope, receive, send)
 
+        request.state.audit_request_id = str(uuid.uuid4())
+        request.state.audit_level = self.audit_level.value
         capture_body = not (request.url.path.startswith('/api/v1/auths') or request.url.path.startswith('/oauth/'))
         async with self._audit_context(request) as context:
 
@@ -254,14 +284,17 @@ class AuditLoggingMiddleware:
         if request.method not in self.audited_methods:
             return True
 
+        if request.url.path.startswith('/ws/socket.io'):
+            return True
+
         path = request.url.path.lower()
         for endpoint in self.ALWAYS_LOG_ENDPOINTS:
             if path.startswith(endpoint):
                 return False  # Do NOT skip logging for auth endpoints
 
         # Skip logging if the request is not authenticated
-        # Check both Authorization header (API keys) and token cookie (browser sessions)
-        if not request.headers.get('authorization') and not request.cookies.get('token'):
+        # Token is set by AppHTTPMiddleware from any accepted credential
+        if not getattr(request.state, 'token', None):
             return True
 
         # Whitelist mode: only log paths that match included_paths
@@ -301,7 +334,7 @@ class AuditLoggingMiddleware:
             response_body = redact_passwords(response_body)
 
             entry = AuditLogEntry(
-                id=str(uuid.uuid4()),
+                id=request.state.audit_request_id,
                 user=user,
                 audit_level=self.audit_level.value,
                 verb=request.method,
@@ -309,6 +342,7 @@ class AuditLoggingMiddleware:
                 response_status_code=context.metadata.get('response_status_code', None),
                 source_ip=request.client.host if request.client else None,
                 user_agent=request.headers.get('user-agent'),
+                model_id=getattr(request.state, 'model_id', None),
                 request_object=request_body,
                 response_object=response_body,
             )

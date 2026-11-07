@@ -16,6 +16,9 @@
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
 	import { config as appConfig } from '$lib/stores';
+	import { setInterfaceVisibility } from '$lib/apis/configs';
+	import type { Visibility } from '$lib/utils/ui-visibility';
+	import VisibilitySettings from './Interface/Visibility.svelte';
 
 	export let saveHandler: () => void;
 
@@ -58,6 +61,7 @@
 	};
 	let toolSearchAlwaysLoaded = '';
 	let showTaskParameters = false;
+	let visibility: Visibility = { ...($appConfig?.ui?.visibility ?? {}) };
 
 	const configuredParams = (params: Record<string, any> = {}) =>
 		Object.fromEntries(
@@ -73,7 +77,7 @@
 		};
 
 		try {
-			[taskConfig, chatConfig] = await Promise.all([
+			[taskConfig, chatConfig, visibility] = await Promise.all([
 				updateTaskConfig(localStorage.token, taskConfigPayload),
 				updateChatConfig(localStorage.token, {
 					...chatConfig,
@@ -81,7 +85,8 @@
 						.split(',')
 						.map((item) => item.trim())
 						.filter((item) => item !== '')
-				})
+				}),
+				setInterfaceVisibility(localStorage.token, visibility)
 			]);
 		} catch (error) {
 			toast.error(
@@ -94,10 +99,15 @@
 			current
 				? {
 						...current,
+						ui: { ...current.ui, visibility },
 						features: {
 							...current.features,
 							enable_context_compaction: chatConfig.ENABLE_CONTEXT_COMPACTION,
-							enable_tool_permissions: chatConfig.ENABLE_TOOL_PERMISSIONS
+							enable_tool_permissions: chatConfig.ENABLE_TOOL_PERMISSIONS,
+							enable_title_generation: taskConfig.ENABLE_TITLE_GENERATION,
+							enable_follow_up_generation: taskConfig.ENABLE_FOLLOW_UP_GENERATION,
+							enable_tags_generation: taskConfig.ENABLE_TAGS_GENERATION,
+							enable_autocomplete_generation: taskConfig.ENABLE_AUTOCOMPLETE_GENERATION
 						}
 					}
 				: current
@@ -193,7 +203,8 @@
 		</h2>
 
 		<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
-			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.tasks.title')} first>
+			<VisibilitySettings bind:visibility />
+			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.tasks.title')}>
 				<div>
 					<div class="mb-2">
 						<div class="text-xs text-gray-600 dark:text-gray-400">
@@ -205,8 +216,12 @@
 					</div>
 
 					<div class="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
-						<AdminSettingField label={$i18n.t('settings.admin.interface.localTaskModel.label')}>
+						<AdminSettingField
+							label={$i18n.t('settings.admin.interface.localTaskModel.label')}
+							forId="task-model"
+						>
 							<SettingsSelect
+								id="task-model"
 								bind:value={taskConfig.TASK_MODEL}
 								className="w-full"
 								placeholder={$i18n.t('Select a model')}
@@ -224,8 +239,12 @@
 							</SettingsSelect>
 						</AdminSettingField>
 
-						<AdminSettingField label={$i18n.t('settings.admin.interface.externalTaskModel.label')}>
+						<AdminSettingField
+							label={$i18n.t('settings.admin.interface.externalTaskModel.label')}
+							forId="task-model-external"
+						>
 							<SettingsSelect
+								id="task-model-external"
 								bind:value={taskConfig.TASK_MODEL_EXTERNAL}
 								className="w-full"
 								placeholder={$i18n.t('Select a model')}
@@ -300,8 +319,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.contextCompactionModel.label')}
 						description={$i18n.t('settings.admin.interface.contextCompactionModel.description')}
+						forId="context-compaction-model"
 					>
 						<SettingsSelect
+							id="context-compaction-model"
 							bind:value={chatConfig.CONTEXT_COMPACTION_MODEL}
 							className="w-full"
 							placeholder={$i18n.t('Select a model')}
@@ -324,8 +345,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.tokenThreshold.label')}
 						description={$i18n.t('settings.admin.interface.tokenThreshold.description')}
+						forId="context-compaction-token-threshold"
 					>
 						<input
+							id="context-compaction-token-threshold"
 							type="number"
 							min="1"
 							step="1"
@@ -337,8 +360,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.tokenCap.label')}
 						description={$i18n.t('settings.admin.interface.tokenCap.description')}
+						forId="context-compaction-token-cap"
 					>
 						<input
+							id="context-compaction-token-cap"
 							type="number"
 							min="1"
 							step="1"
@@ -350,8 +375,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.retainedMessages.label')}
 						description={$i18n.t('settings.admin.interface.retainedMessages.description')}
+						forId="context-compaction-retained-messages"
 					>
 						<input
+							id="context-compaction-retained-messages"
 							type="number"
 							min="10"
 							max="50"
@@ -412,8 +439,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.toolSearchThreshold.label')}
 						description={$i18n.t('settings.admin.interface.toolSearchThreshold.description')}
+						forId="tool-search-threshold"
 					>
 						<input
+							id="tool-search-threshold"
 							type="number"
 							min="0"
 							step="1"
@@ -425,8 +454,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.interface.toolSearchAlwaysLoaded.label')}
 						description={$i18n.t('settings.admin.interface.toolSearchAlwaysLoaded.description')}
+						forId="tool-search-always-loaded"
 					>
 						<input
+							id="tool-search-always-loaded"
 							class={inputClass}
 							type="text"
 							placeholder={$i18n.t('settings.admin.interface.toolSearchAlwaysLoaded.placeholder')}
@@ -541,16 +572,18 @@
 					/>
 				</AdminSettingRow>
 
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.interface.webSearchQueryGeneration.label')}
-					description={$i18n.t('settings.admin.interface.webSearchQueryGeneration.description')}
-					let:labelId
-				>
-					<Switch
-						bind:state={taskConfig.ENABLE_SEARCH_QUERY_GENERATION}
-						ariaLabelledbyId={labelId}
-					/>
-				</AdminSettingRow>
+				{#if $appConfig?.features?.enable_web_search}
+					<AdminSettingRow
+						label={$i18n.t('settings.admin.interface.webSearchQueryGeneration.label')}
+						description={$i18n.t('settings.admin.interface.webSearchQueryGeneration.description')}
+						let:labelId
+					>
+						<Switch
+							bind:state={taskConfig.ENABLE_SEARCH_QUERY_GENERATION}
+							ariaLabelledbyId={labelId}
+						/>
+					</AdminSettingRow>
+				{/if}
 
 				<AdminSettingField
 					label={$i18n.t('settings.admin.interface.queryGenerationPrompt.label')}
@@ -580,8 +613,10 @@
 						description={$i18n.t(
 							'settings.admin.interface.autocompleteGenerationInputMaxLength.description'
 						)}
+						forId="autocomplete-generation-input-max-length"
 					>
 						<input
+							id="autocomplete-generation-input-max-length"
 							type="number"
 							min="-1"
 							step="1"

@@ -512,6 +512,7 @@ class Pipe:
 					{:else}
 						<LocalizedField
 							placeholder={$i18n.t('Function Name')}
+							showControls={false}
 							bind:value={name}
 							bind:translations={meta.i18n}
 							{locale}
@@ -562,6 +563,7 @@ class Pipe:
 						{:else}
 							<LocalizedField
 								placeholder={$i18n.t('Function Description')}
+								showControls={false}
 								bind:value={meta.description}
 								bind:translations={meta.i18n}
 								{locale}
@@ -637,6 +639,7 @@ class Pipe:
 					value={selected.snapshot.content}
 					lang="python"
 					readOnly
+					ariaLabel={$i18n.t('Code Editor')}
 					className="text-[0.6875rem]"
 				/>
 			{/if}
@@ -646,6 +649,7 @@ class Pipe:
 					value={content}
 					readOnly={!!selected || selecting || promoting}
 					lang="python"
+					ariaLabel={$i18n.t('Code Editor')}
 					{boilerplate}
 					className="text-[0.6875rem]"
 					onChange={(e: string) => {

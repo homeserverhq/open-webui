@@ -70,12 +70,12 @@
 				: null;
 </script>
 
-<Modal bind:show size="md">
+<Modal ariaLabel={$i18n.t('Available Tools')} bind:show size="md">
 	<div>
 		<div class=" flex justify-between dark:text-gray-300 px-4 pt-3 pb-1">
 			<div class=" text-sm font-medium self-center">{$i18n.t('Available Tools')}</div>
 			<button
-				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				aria-label={$i18n.t('Close')}
 				on:click={() => {
 					show = false;
@@ -106,8 +106,9 @@
 							onChange={(open: boolean) => {
 								if (open && isMcp && !needsAuth && !state) loadSpecs(tool);
 							}}
+							let:open
 						>
-							<div class="min-w-0 flex-1">
+							<button type="button" class="min-w-0 flex-1 text-left" aria-expanded={open}>
 								<div class="flex items-center gap-2 min-w-0">
 									<div class="text-sm font-normal dark:text-gray-100 text-gray-800 truncate">
 										{resolveLocalizedResource(tool, $i18n.language)}
@@ -138,7 +139,7 @@
 										{resolveLocalizedResource(tool, $i18n.language, 'description')}
 									</div>
 								{/if}
-							</div>
+							</button>
 							<div slot="content" class="px-2 pb-2 text-xs text-gray-500 dark:text-gray-400">
 								{#if needsAuth}
 									<button
@@ -200,8 +201,8 @@
 				</div>
 				<div class=" text-sm dark:text-gray-300 mb-1">
 					{#each selectedToolServers as toolServer}
-						<Collapsible buttonClassName="w-full" chevron>
-							<div>
+						<Collapsible buttonClassName="w-full" chevron let:open>
+							<button type="button" class="text-left" aria-expanded={open}>
 								<div class="text-sm font-normal dark:text-gray-100 text-gray-800">
 									{toolServer?.openapi?.info?.title} - v{toolServer?.openapi?.info?.version}
 								</div>
@@ -213,7 +214,7 @@
 								<div class="text-xs text-gray-500">
 									{toolServer?.url}
 								</div>
-							</div>
+							</button>
 
 							<div
 								slot="content"

@@ -1,4 +1,8 @@
 <script lang="ts">
+	import type { CommentsRequest } from '$lib/components/comments/CommentsPanel.svelte';
+	export let onComment: (request: CommentsRequest) => void;
+	import CommentButton from '$lib/components/comments/CommentButton.svelte';
+	export let resourceId = '';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import { getContext } from 'svelte';
 
@@ -67,6 +71,13 @@
 
 				<div class="flex items-center">{$i18n.t('Edit')}</div>
 			</button>
+			<CommentButton
+				{onComment}
+				modal
+				menu
+				resource={{ resource_type: 'skill', resource_id: resourceId }}
+				onOpen={() => (show = false)}
+			/>
 			{#if accessHandler}
 				<button
 					type="button"
@@ -111,6 +122,16 @@
 				<button
 					class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:text-gray-900 dark:hover:text-gray-100"
 					on:click={() => {
+						exportHandler('skill');
+						closeMenu();
+					}}
+				>
+					<Download className="size-3.5" />
+					<div class="flex items-center">{$i18n.t('Export .skill')}</div>
+				</button>
+				<button
+					class="select-none flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:text-gray-900 dark:hover:text-gray-100"
+					on:click={() => {
 						exportHandler('json');
 						closeMenu();
 					}}
@@ -123,7 +144,7 @@
 					on:click={() => {
 						exportHandler('zip');
 						closeMenu();
-					}}><Download className="size-3.5" />Export ZIP</button
+					}}><Download className="size-3.5" />{$i18n.t('Export ZIP')}</button
 				>
 			{/if}
 

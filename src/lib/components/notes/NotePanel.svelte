@@ -5,17 +5,25 @@
 	import ResizableSidePanel from '../common/ResizableSidePanel.svelte';
 
 	export let show = false;
+	export let side: 'left' | 'right' = 'right';
+	export let panelWidth = 350;
+	export let minWidth = 350;
+	export let closeOnDragBelowMinWidth = true;
+	export let resizerId = 'controls-resizer';
+	export let storageKey = '';
+	export let floating = false;
+	export let onClose: () => void = () => {};
+	export let ariaLabel: string | undefined = undefined;
 
 	let mediaQuery: MediaQueryList;
 	let largeScreen = false;
-	let panelWidth = 350;
 
 	const handleMediaQuery = (e: MediaQueryListEvent | MediaQueryList) => {
 		largeScreen = e.matches;
 	};
 
 	onMount(() => {
-		mediaQuery = window.matchMedia('(min-width: 1000px)');
+		mediaQuery = window.matchMedia('(min-width: 768px)');
 		mediaQuery.addEventListener('change', handleMediaQuery);
 		handleMediaQuery(mediaQuery);
 	});
@@ -29,8 +37,10 @@
 	{#if show}
 		<Drawer
 			{show}
+			{ariaLabel}
 			onClose={() => {
 				show = false;
+				onClose();
 			}}
 		>
 			<div class="h-screen max-h-dvh flex flex-col">
@@ -42,14 +52,21 @@
 	<ResizableSidePanel
 		bind:open={show}
 		bind:width={panelWidth}
-		minWidth={350}
+		{minWidth}
+		{side}
+		{resizerId}
+		{storageKey}
+		subtleDivider={floating}
 		minSiblingWidth={360}
-		closeOnDragBelowMinWidth
+		{closeOnDragBelowMinWidth}
+		{onClose}
 		className="h-full z-10"
 	>
 		<div class="flex h-full max-h-full min-h-full">
 			<div
-				class="w-full bg-white dark:bg-gray-900 z-40 pointer-events-auto overflow-hidden scrollbar-hidden flex flex-col"
+				class="w-full z-40 pointer-events-auto overflow-hidden scrollbar-hidden flex flex-col {floating
+					? ''
+					: 'bg-white dark:bg-gray-900'}"
 			>
 				<slot />
 			</div>

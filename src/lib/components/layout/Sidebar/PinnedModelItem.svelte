@@ -22,6 +22,7 @@
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div
 		class=" flex justify-center text-gray-800 dark:text-gray-200 cursor-grab relative group"
+		role="listitem"
 		data-id={model?.id}
 		on:mouseenter={(e) => {
 			mouseOver = true;
@@ -62,6 +63,7 @@
 				<div class=" flex items-center self-center space-x-1.5">
 					<Tooltip content={$i18n.t('Unpin')} className="flex items-center">
 						<button
+							aria-label={$i18n.t('Unpin')}
 							class=" self-center dark:hover:text-white transition"
 							on:click={() => {
 								onUnpin();

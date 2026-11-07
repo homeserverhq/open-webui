@@ -19,8 +19,11 @@
 	export let onUpload: (e: any) => void = () => {};
 	export let onCompact: () => void = () => {};
 	export let onStatus: () => void = () => {};
+	export let onComments: () => void = () => {};
+	export let onSide: () => void = () => {};
 	export let onFork: () => void = () => {};
 	export let onModel: () => void = () => {};
+	export let onCompare: (() => void) | null = null;
 	export let onSettings: () => void = () => {};
 	export let onTemporary: () => void = () => {};
 	export let onCreateSkill: () => void = () => {};
@@ -28,27 +31,37 @@
 	export let canCompact: boolean | (() => boolean) = false;
 	export let compactDisabled: boolean | (() => boolean) = false;
 	export let canStatus: boolean | (() => boolean) = false;
+	export let canComments: boolean | (() => boolean) = false;
+	export let canSide: boolean | (() => boolean) = false;
 	export let canFork: boolean | (() => boolean) = false;
 	export let forkDisabled: boolean | (() => boolean) = false;
 	export let canTemporary: boolean | (() => boolean) = false;
 	export let temporaryEnabled: boolean | (() => boolean) = false;
 	export let hasChatContent = false;
+	export let canCreateSkill: boolean | (() => boolean) = false;
 	export let contextUsage = null;
+	export let fileUploadEnabled: boolean | (() => boolean) = true;
 
 	$: compactAvailable = typeof canCompact === 'function' ? canCompact() : canCompact;
 	$: isCompactDisabled =
 		typeof compactDisabled === 'function' ? compactDisabled() : compactDisabled;
 	$: statusAvailable = typeof canStatus === 'function' ? canStatus() : canStatus;
+	$: commentsAvailable = typeof canComments === 'function' ? canComments() : canComments;
+	$: sideAvailable = typeof canSide === 'function' ? canSide() : canSide;
 	$: forkAvailable = typeof canFork === 'function' ? canFork() : canFork;
 	$: isForkDisabled = typeof forkDisabled === 'function' ? forkDisabled() : forkDisabled;
 	$: temporaryAvailable = typeof canTemporary === 'function' ? canTemporary() : canTemporary;
 	$: isTemporaryEnabled =
 		typeof temporaryEnabled === 'function' ? temporaryEnabled() : temporaryEnabled;
+	$: createSkillAvailable =
+		typeof canCreateSkill === 'function' ? canCreateSkill() : canCreateSkill;
 	$: resolvedContextUsage = typeof contextUsage === 'function' ? contextUsage() : contextUsage;
 	$: contextHasThreshold = Number(resolvedContextUsage?.threshold) > 0;
 	$: contextPercent = contextHasThreshold
 		? Math.max(0, Math.round(resolvedContextUsage?.percent ?? 0))
 		: null;
+	$: isFileUploadEnabled =
+		typeof fileUploadEnabled === 'function' ? fileUploadEnabled() : fileUploadEnabled;
 
 	let suggestionElement: any = null;
 	let filteredItems: any[] = [];
@@ -100,10 +113,13 @@
 				<SlashCommands
 					bind:this={suggestionElement}
 					{query}
+					canCompare={onCompare !== null}
 					bind:filteredItems
 					canCompact={compactAvailable}
 					compactDisabled={isCompactDisabled}
 					canStatus={statusAvailable}
+					canComments={commentsAvailable}
+					canSide={sideAvailable}
 					canFork={forkAvailable}
 					forkDisabled={isForkDisabled}
 					canTemporary={temporaryAvailable}
@@ -111,6 +127,7 @@
 					{contextPercent}
 					{contextHasThreshold}
 					{hasChatContent}
+					canCreateSkill={createSkillAvailable}
 					onSelect={(e) => {
 						const { type, data } = e;
 
@@ -127,12 +144,21 @@
 						} else if (type === 'command' && data.id === 'status') {
 							command({ id: data.id, label: data.id });
 							onStatus();
+						} else if (type === 'command' && data.id === 'comments') {
+							command({ id: data.id, label: data.id });
+							onComments();
+						} else if (type === 'command' && data.id === 'side') {
+							command({ id: data.id, label: data.id });
+							onSide();
 						} else if (type === 'command' && data.id === 'fork') {
 							command({ id: data.id, label: data.id });
 							onFork();
 						} else if (type === 'command' && data.id === 'model') {
 							command({ id: data.id, label: data.id });
 							onModel();
+						} else if (type === 'command' && data.id === 'compare') {
+							command({ id: data.id, label: data.id });
+							onCompare?.();
 						} else if (type === 'command' && data.id === 'settings') {
 							command({ id: data.id, label: data.id });
 							onSettings();
@@ -159,6 +185,7 @@
 				<Knowledge
 					bind:this={suggestionElement}
 					{query}
+					fileUploadEnabled={isFileUploadEnabled}
 					bind:filteredItems
 					onSelect={(e) => {
 						const { type, data } = e;
@@ -184,6 +211,7 @@
 				<AtCommands
 					bind:this={suggestionElement}
 					{query}
+					fileUploadEnabled={isFileUploadEnabled}
 					bind:filteredItems
 					onSelect={(e) => {
 						const { type, data } = e;

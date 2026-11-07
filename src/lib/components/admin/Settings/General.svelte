@@ -84,6 +84,8 @@
 			const cleaned = entriesToI18n(uiI18nEntries);
 			const res = await updateAdminConfig(localStorage.token, {
 				...adminConfig,
+				SKILL_CONTENT_MAX_CHARS: adminConfig.SKILL_CONTENT_MAX_CHARS ?? null,
+				SKILL_PREVIEW_MAX_CHARS: adminConfig.SKILL_PREVIEW_MAX_CHARS ?? null,
 				DEFAULT_INTERFACE_SETTINGS: defaultInterfaceSettings,
 				I18N: cleaned
 			});
@@ -306,8 +308,10 @@
 					<AdminSettingField
 						label={$i18n.t('settings.admin.general.folderMaxFileCount.label')}
 						description={$i18n.t('settings.admin.general.folderMaxFileCount.description')}
+						forId="folder-max-file-count"
 					>
 						<input
+							id="folder-max-file-count"
 							class={inputClass}
 							type="number"
 							min="0"
@@ -338,11 +342,62 @@
 					</AdminSettingRow>
 				{/if}
 				<AdminSettingRow
+					label={$i18n.t('settings.admin.general.skillLazyLoading.label')}
+					description={$i18n.t('settings.admin.general.skillLazyLoading.description')}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_SKILL_LAZY_LOADING} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+				<AdminSettingField
+					forId="skill-content-max-chars"
+					label={$i18n.t('settings.admin.general.skillContentMaxChars.label')}
+					description={$i18n.t('settings.admin.general.skillContentMaxChars.description')}
+				>
+					<input
+						id="skill-content-max-chars"
+						class={inputClass}
+						type="number"
+						min="1"
+						step="1"
+						placeholder={$i18n.t('Default')}
+						bind:value={adminConfig.SKILL_CONTENT_MAX_CHARS}
+					/>
+				</AdminSettingField>
+				<AdminSettingField
+					forId="skill-preview-max-chars"
+					label={$i18n.t('settings.admin.general.skillPreviewMaxChars.label')}
+					description={$i18n.t('settings.admin.general.skillPreviewMaxChars.description')}
+				>
+					<input
+						id="skill-preview-max-chars"
+						class={inputClass}
+						type="number"
+						min="1"
+						step="1"
+						placeholder={$i18n.t('Default')}
+						bind:value={adminConfig.SKILL_PREVIEW_MAX_CHARS}
+					/>
+				</AdminSettingField>
+				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.notes.label')}
 					description={$i18n.t('settings.admin.general.notes.description')}
 					let:labelId
 				>
 					<Switch bind:state={adminConfig.ENABLE_NOTES} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.general.comments.label')}
+					description={$i18n.t('settings.admin.general.comments.description')}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_COMMENTS} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.general.notifications.label')}
+					description={$i18n.t('settings.admin.general.notifications.description')}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_NOTIFICATIONS} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.channels.label')}
@@ -352,6 +407,14 @@
 					<Switch bind:state={adminConfig.ENABLE_CHANNELS} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 				{#if adminConfig.ENABLE_CHANNELS}
+					<AdminSettingRow
+						label={$i18n.t('settings.admin.general.encryptedChannels.label')}
+						description={$i18n.t('settings.admin.general.encryptedChannels.description')}
+						labelClassName="text-gray-500 dark:text-gray-500"
+						let:labelId
+					>
+						<Switch bind:state={adminConfig.ENABLE_ENCRYPTED_CHANNELS} ariaLabelledbyId={labelId} />
+					</AdminSettingRow>
 					<AdminSettingRow
 						label={$i18n.t('settings.admin.general.modelResponseMode.label')}
 						description={$i18n.t('settings.admin.general.modelResponseMode.description')}
@@ -367,6 +430,13 @@
 						</SettingsSelect>
 					</AdminSettingRow>
 				{/if}
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.general.apps.label')}
+					description={$i18n.t('settings.admin.general.apps.description')}
+					let:labelId
+				>
+					<Switch bind:state={adminConfig.ENABLE_APPS} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.calendar.label')}
 					description={$i18n.t('settings.admin.general.calendar.description')}
@@ -410,8 +480,10 @@
 				<AdminSettingField
 					label={$i18n.t('settings.admin.general.webuiUrl.label')}
 					description={$i18n.t('settings.admin.general.webuiUrl.description')}
+					forId="webui-url"
 				>
 					<input
+						id="webui-url"
 						class={inputClass}
 						type="text"
 						placeholder={`e.g.) "http://localhost:3000"`}

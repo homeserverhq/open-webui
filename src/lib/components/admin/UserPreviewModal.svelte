@@ -32,7 +32,7 @@
 	};
 </script>
 
-<Modal size="md" bind:show>
+<Modal ariaLabel={$i18n.t('User Preview')} size="md" bind:show>
 	<div>
 		<div class=" flex justify-between dark:text-gray-100 px-4 pt-3 mb-1">
 			<div class=" text-sm font-medium self-center min-w-0 truncate">
@@ -42,6 +42,7 @@
 				{/if}
 			</div>
 			<button
+				aria-label={$i18n.t('Close')}
 				class="self-center flex-shrink-0"
 				on:click={() => {
 					show = false;

@@ -27,10 +27,12 @@ DICT_CONFIG_KEY_ALIASES = {
     'ollama.api_configs': ('OLLAMA_API_CONFIGS',),
     'rag.mineru_params': ('MINERU_PARAMS',),
     'rag.docling_params': ('DOCLING_PARAMS',),
+    'rag.mistral_ocr_params': ('MISTRAL_OCR_PARAMS',),
     'web.search.linkup_search_params': ('LINKUP_SEARCH_PARAMS',),
     'image_generation.automatic1111.api_params': ('AUTOMATIC1111_PARAMS',),
     'image_generation.openai.params': ('IMAGES_OPENAI_API_PARAMS',),
     'audio.tts.openai.params': ('AUDIO_TTS_OPENAI_PARAMS',),
+    'audio.realtime.input_params': ('AUDIO_REALTIME_INPUT_PARAMS',),
     'models.default_metadata': ('DEFAULT_MODEL_METADATA',),
     'models.default_params': ('DEFAULT_MODEL_PARAMS',),
     'task.model.params': ('TASK_MODEL_PARAMS',),
@@ -96,7 +98,7 @@ def _json_value(value: Any) -> Any:
     return jsonable_encoder(value)
 
 
-# ── Model ────────────────────────────────────────────────────────────────────
+# Model
 
 
 class Config(Base):
@@ -112,7 +114,7 @@ class Config(Base):
     PERSISTENT_ENABLED: ClassVar[bool] = True
     OAUTH_PERSISTENT_ENABLED: ClassVar[bool] = False
 
-    # ── Class methods ────────────────────────────────────────
+    # Class methods
 
     @classmethod
     def configure(

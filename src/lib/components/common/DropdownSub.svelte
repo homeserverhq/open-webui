@@ -8,7 +8,7 @@
 	export let contentClass =
 		'select-none rounded-2xl p-1 z-50 bg-white dark:bg-gray-850 dark:text-white shadow-lg border border-gray-100 dark:border-gray-800';
 
-	/** Max width in px, enforced at the component level */
+	/** Max width at the default 16px root size; scales with the interface. */
 	export let maxWidth = 200;
 
 	/** Side offset from the trigger in px (visual gap, bridged by invisible padding) */
@@ -18,8 +18,10 @@
 	let triggerEl: HTMLElement | null = null;
 	let contentEl: HTMLElement | null = null;
 
-	function trigger(node: HTMLElement) {
+	function trigger(node: HTMLElement, expanded: boolean) {
 		triggerEl = (node.firstElementChild as HTMLElement | null) || node;
+		triggerEl.setAttribute('aria-haspopup', 'menu');
+		triggerEl.setAttribute('aria-expanded', String(expanded));
 
 		async function handleClick(event: MouseEvent) {
 			event.preventDefault();
@@ -37,6 +39,9 @@
 		node.addEventListener('keydown', handleKeydown);
 
 		return {
+			update(expanded: boolean) {
+				triggerEl?.setAttribute('aria-expanded', String(expanded));
+			},
 			destroy() {
 				node.removeEventListener('click', handleClick);
 				node.removeEventListener('keydown', handleKeydown);
@@ -103,6 +108,12 @@
 		contentEl.style.top = `${top}px`;
 	}
 
+	function markMenuItems() {
+		contentEl
+			?.querySelectorAll('button:not([role]), a[href]:not([role])')
+			.forEach((item) => item.setAttribute('role', 'menuitem'));
+	}
+
 	async function openSub(focus = false) {
 		open = true;
 		await tick();
@@ -110,8 +121,12 @@
 		// Re-position after transition starts rendering real dimensions
 		setTimeout(positionContent, 50);
 
+		markMenuItems();
+
 		if (focus) {
-			contentEl?.focus();
+			(
+				contentEl?.querySelector<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? contentEl
+			)?.focus();
 		}
 	}
 
@@ -120,7 +135,25 @@
 	}
 
 	function handleContentKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Escape') return;
+		if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && contentEl) {
+			const items = [
+				...contentEl.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])')
+			].filter((item) => item.getClientRects().length > 0);
+			const index = items.indexOf(event.target as HTMLElement);
+			const nextIndex =
+				event.key === 'Home'
+					? 0
+					: event.key === 'End'
+						? items.length - 1
+						: (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+
+			event.preventDefault();
+			event.stopPropagation();
+			items[nextIndex]?.focus();
+			return;
+		}
+
+		if (event.key !== 'Escape' && event.key !== 'ArrowLeft') return;
 
 		event.stopPropagation();
 		open = false;
@@ -146,8 +179,13 @@
 
 	function portal(node: HTMLElement) {
 		document.body.appendChild(node);
+
+		const mutationObserver = new MutationObserver(markMenuItems);
+		mutationObserver.observe(node, { childList: true, subtree: true });
+
 		return {
 			destroy() {
+				mutationObserver.disconnect();
 				if (node.parentNode) {
 					node.parentNode.removeChild(node);
 				}
@@ -160,7 +198,7 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-	use:trigger
+	use:trigger={open}
 	class="w-full {($settings?.highContrastMode ?? false)
 		? '[&>button:hover]:bg-gray-200! dark:[&>button:hover]:bg-gray-800!'
 		: '[&>button:hover]:bg-gray-50/60 dark:[&>button:hover]:bg-gray-800/60'}"
@@ -183,7 +221,7 @@
 	>
 		<!-- Inner content: visual styles and transition -->
 		<div transition:flyAndScale>
-			<DropdownMenu className={contentClass} style="max-width: {maxWidth}px;">
+			<DropdownMenu className={contentClass} style="max-width: {maxWidth / 16}rem;">
 				<slot />
 			</DropdownMenu>
 		</div>

@@ -1,7 +1,8 @@
 <script lang="ts">
+	import { v4 as uuidv4 } from 'uuid';
 	import { onDestroy, getContext, tick, type Snippet } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { createFocusTrap } from 'focus-trap';
+	import { copyToClipboard } from '$lib/utils';
 	import { mobile } from '$lib/stores';
 	import Drawer from '$lib/components/common/Drawer.svelte';
 	import ResizableSidePanel from '$lib/components/common/ResizableSidePanel.svelte';
@@ -21,6 +22,7 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import FileCodeEditor from '$lib/components/chat/FileNav/FileCodeEditor.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import DiffEditorModal from '$lib/components/common/DiffEditorModal.svelte';
 	import {
 		getSkillFiles,
 		getSkillFile,
@@ -60,6 +62,8 @@
 	let showFileDrawer = false;
 	let sidebarWidth = 256;
 	let codeEditor: FileCodeEditor | undefined;
+	let showComparison = false;
+	let comparison: { path: string; content: string; key: string; request: number } | null = null;
 	let value = '';
 	let loadedValue = '';
 	let loadedPath = '';
@@ -78,7 +82,7 @@
 	let newName = '';
 	let newNameInput: HTMLInputElement;
 	let dialog = { show: false, title: '', input: false, value: '', action: (_: string) => {} };
-	const dragType = `application/x-skill-file-${crypto.randomUUID()}`;
+	const dragType = `application/x-skill-file-${uuidv4()}`;
 
 	const ask = (title: string, input: boolean, action: (value: string) => void, value = '') => {
 		dialog = { show: true, title, input, value, action };
@@ -149,16 +153,34 @@
 			dirty = true;
 		}
 	};
-	const fileDrawer = (node: HTMLElement) => {
-		const trap = createFocusTrap(node, { escapeDeactivates: false });
-		trap.activate();
-		return {
-			destroy: () => {
-				flush();
-				trap.deactivate();
-			}
-		};
+	const copyContent = async () => {
+		if (loading || loadError || !loadedPath || objectUrl) return;
+		if (await copyToClipboard(codeEditor?.getValue() ?? value))
+			toast.success($i18n.t('Copied to clipboard'));
+		else toast.error($i18n.t('Could not copy to clipboard. Please try again.'));
 	};
+	const compareRevision = () => {
+		if (readOnly || loading || loadError || !loadedPath || objectUrl) return;
+		flush();
+		comparison = { path: loadedPath, content: value, key: loadKey, request: requestId };
+		preview = false;
+		showComparison = true;
+	};
+	const applyComparison = (content: string) => {
+		if (
+			readOnly ||
+			!comparison ||
+			comparison.path !== loadedPath ||
+			comparison.key !== loadKey ||
+			comparison.request !== requestId ||
+			!files.some((file) => file.path === comparison?.path)
+		)
+			throw new Error($i18n.t('The file has changed. Reopen the comparison before applying.'));
+		codeEditor?.setValue(content);
+		value = content;
+		flush();
+	};
+	const fileDrawer = () => ({ destroy: flush });
 	$: if (!$mobile) showFileDrawer = false;
 	$: if (loadedPath && value !== loadedValue && !readOnly) {
 		dirty = true;
@@ -479,6 +501,14 @@
 	});
 </script>
 
+<DiffEditorModal
+	bind:show={showComparison}
+	initialContent={comparison?.content ?? ''}
+	filePath={comparison?.path ?? null}
+	onApply={applyComparison}
+	onClose={() => (comparison = null)}
+/>
+
 <ConfirmDialog
 	bind:show={dialog.show}
 	title={dialog.title}
@@ -530,15 +560,8 @@
 </div>
 
 {#if $mobile}
-	<Drawer bind:show={showFileDrawer} className="h-full" onClose={flush}>
-		<div
-			class="h-full"
-			role="dialog"
-			aria-modal="true"
-			aria-label={selected}
-			tabindex="-1"
-			use:fileDrawer
-		>
+	<Drawer bind:show={showFileDrawer} className="h-full" ariaLabel={selected} onClose={flush}>
+		<div class="h-full" use:fileDrawer>
 			{@render fileContent()}
 		</div>
 	</Drawer>
@@ -563,18 +586,33 @@
 				</button>
 			{/if}
 			<span class="min-w-0 flex-1 truncate text-gray-500" title={selected}>{selected}</span>
+			{#if !readOnly && loadedPath && !objectUrl && !loading && !loadError}
+				<button
+					type="button"
+					class="rounded-lg px-1.5 py-0.5 text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100"
+					on:click={compareRevision}>{$i18n.t('Compare revision')}</button
+				>
+			{/if}
 			{#if /\.md$/i.test(selected) && !loading}<button
 					type="button"
 					class="rounded-lg px-1.5 py-0.5 text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100"
 					on:click={async () => {
 						preview = !preview;
 						if (preview) await renderPreview();
-					}}>{preview ? 'Edit' : 'Preview'}</button
+					}}>{preview ? $i18n.t('Edit') : $i18n.t('Preview')}</button
 				>{/if}
+			{#if loadedPath && !objectUrl && !loading && !loadError}
+				<button
+					type="button"
+					aria-label={$i18n.t('Copy content')}
+					class="shrink-0 rounded-lg px-1.5 py-0.5 text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100"
+					on:click={copyContent}>{$i18n.t('Copy')}</button
+				>
+			{/if}
 			<button
 				type="button"
 				class="rounded-lg px-1.5 py-0.5 text-gray-500 transition hover:text-gray-900 dark:hover:text-gray-100"
-				on:click={() => download(selected)}>Download</button
+				on:click={() => download(selected)}>{$i18n.t('Download')}</button
 			>
 		</div>
 		{#if loadError}<p role="alert" class="p-3 text-red-500">{loadError}</p>
@@ -591,7 +629,9 @@
 					sandbox=""
 					class="min-h-0 flex-1"
 				></iframe>
-			{:else}<p class="p-3 text-xs text-gray-500">Binary file. Download to open.</p>{/if}
+			{:else}<p class="p-3 text-xs text-gray-500">
+					{$i18n.t('Binary file. Download to open.')}
+				</p>{/if}
 		{:else if preview}
 			<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 			<div
@@ -602,7 +642,7 @@
 						event.preventDefault();
 						const path = link.dataset.skillPath!;
 						if (files.some((f) => f.path === path)) open(path);
-						else toast.error('File not found');
+						else toast.error($i18n.t('File not found.'));
 					}
 				}}
 			>
@@ -747,10 +787,10 @@
 				type="button"
 				class="px-2 text-xs"
 				on:click={() =>
-					ask('Delete selected files?', false, () => {
+					ask($i18n.t('Delete selected files?'), false, () => {
 						selectedPaths.forEach(remove);
 						selectedPaths = new Set();
-					})}>Delete selected</button
+					})}>{$i18n.t('Delete selected')}</button
 			>{/if}
 		{#if !currentPath}{@render createInput()}{/if}
 		<ul>
@@ -777,7 +817,9 @@
 					onToggleExpand={toggleFolder}
 					onRename={(path, name) => rename(path, path.slice(0, path.lastIndexOf('/') + 1) + name)}
 					onDelete={(path) =>
-						ask('Delete this file or folder?', false, () => remove(path.replace(/\/$/, '')))}
+						ask($i18n.t('Delete this file or folder?'), false, () =>
+							remove(path.replace(/\/$/, ''))
+						)}
 					onMove={(paths, destination) =>
 						paths.forEach((path) => {
 							path = path.replace(/\/$/, '');
@@ -791,7 +833,7 @@
 			{/each}
 		</ul>
 		{#if !rows.length}<p class="p-3 text-xs text-gray-500">
-				Empty folders are saved when they contain files.
+				{$i18n.t('Empty folders are saved when they contain files.')}
 			</p>{/if}
 	</div>
 {/snippet}

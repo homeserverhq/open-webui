@@ -217,7 +217,8 @@ export const updateSkillById = async (token: string, id: string, skill: object) 
 			authorization: `Bearer ${token}`
 		},
 		body: JSON.stringify({
-			...skill
+			...skill,
+			access_grants: undefined
 		})
 	})
 		.then(async (res) => {
@@ -399,7 +400,7 @@ export const cloneSkill = async (
 	).json();
 export const exportSkillBundle = async (
 	token: string,
-	format: 'json' | 'zip',
+	format: 'json' | 'zip' | 'skill',
 	ids: string[] = [],
 	versionId?: string
 ) => {

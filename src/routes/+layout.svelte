@@ -1,4 +1,5 @@
 <script>
+	import CommentsHost from '$lib/components/comments/CommentsHost.svelte';
 	import { io } from 'socket.io-client';
 	import { spring } from 'svelte/motion';
 	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
@@ -24,6 +25,7 @@
 		chatId,
 		tags,
 		temporaryChatEnabled,
+		openTemporaryChatIds,
 		isLastActiveTab,
 		isApp,
 		appInfo,
@@ -33,15 +35,14 @@
 		channelId,
 		channelRequestQueues,
 		terminalServers,
-		connectedUserTerminals,
-		showControls,
+		showTabs,
 		showFileNavPath,
 		showFileNavDir,
 		pyodideWorker,
 		desktopEvent
 	} from '$lib/stores';
 	import { refreshChatList } from '$lib/stores/chatList';
-	import { getFileContentById } from '$lib/apis/files';
+	import { getFileBlobById, getFileContentById } from '$lib/apis/files';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { beforeNavigate } from '$app/navigation';
@@ -76,13 +77,13 @@
 	import { setTextScale } from '$lib/utils/text-scale';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
-	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
 	import SyncStatsModal from '$lib/components/chat/Settings/SyncStatsModal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import MfaManagement from '$lib/components/auth/MfaManagement.svelte';
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 	import { getUserSettings } from '$lib/apis/users';
-	import { getChannels } from '$lib/apis/channels';
+	import { getChannelById, getChannels } from '$lib/apis/channels';
+	import { shouldNotifyChannelMessage } from '$lib/utils/channelNotifications';
 	import { resolveTerminalConnection, terminalRequest } from '$lib/apis/terminal';
 
 	const unregisterServiceWorkers = async () => {
@@ -183,7 +184,7 @@
 			randomizationFactor: 0.5,
 			path: '/ws/socket.io',
 			transports: enableWebsocket ? ['websocket'] : ['polling', 'websocket'],
-			auth: { token: localStorage.token }
+			auth: (cb) => cb({ token: localStorage.token })
 		});
 		await socket.set(_socket);
 
@@ -553,11 +554,11 @@
 						: terminalFileResult(result, params, toolServer.url, chatId)
 					: res;
 
-			if (data?.name === 'display_file' && params?.path && !inlineDisplayFile) {
+			if (data?.name === 'display_file' && params?.path && !inlineDisplayFile && !chatId) {
 				if (result?.exists !== false) {
 					displayFileHandler(
 						result?.path ?? params.path,
-						{ showControls, showFileNavPath },
+						{ showTabs, showFileNavPath },
 						{ page: params?.page }
 					);
 				}
@@ -579,28 +580,13 @@
 
 	const chatEventHandler = async (event, cb) => {
 		if (event.shared) return;
-		// Answer this session's availability check even when another chat is active.
-		if (
-			event?.data?.type === 'request:terminal:state' &&
-			event.data.data?.session_id === $socket?.id
-		) {
-			cb?.({
-				connected:
-					$config?.features?.enable_tool_servers &&
-					[...$connectedUserTerminals.values()].some(
-						(shell) =>
-							shell.terminalId === event.data.data?.terminal_id && shell.chatId === event.chat_id
-					)
-			});
-			return;
-		}
 		const chat = $page.url.pathname.includes(`/c/${event.chat_id}`);
 
 		// Skip events from temporary chats that are not the current chat.
 		// This prevents notifications from being sent to other tabs/devices
 		// for privacy, since temporary chats are not meant to be persisted or visible elsewhere.
 		const isTemporaryChat = isTemporaryChatId(event.chat_id);
-		if (isTemporaryChat && event.chat_id !== $chatId) {
+		if (isTemporaryChat && event.chat_id !== $chatId && !$openTemporaryChatIds.has(event.chat_id)) {
 			return;
 		}
 
@@ -671,11 +657,18 @@
 					const connection = resolveTerminalConnection(
 						data.terminal_id,
 						[],
-						$settings?.terminalServers ?? [],
+						$config?.features?.enable_direct_integrations ? ($settings?.terminalServers ?? []) : [],
 						localStorage.token
 					);
 					if (!connection) throw new Error('Terminal Not Found');
-					const result = await terminalRequest(connection, event.chat_id, data.path);
+					let options = {};
+					if (data.file) {
+						const blob = await getFileBlobById(localStorage.token, data.file.id);
+						const body = new FormData();
+						body.append('file', blob, data.file.name);
+						options = { method: 'POST', body };
+					}
+					const result = await terminalRequest(connection, event.chat_id, data.path, options);
 					cb?.({ data: result });
 				} catch (error) {
 					cb?.({ error: `${error}` });
@@ -772,6 +765,7 @@
 
 		if (
 			!event?.internal &&
+			!$openTemporaryChatIds.has(event.chat_id) &&
 			((event.chat_id !== $chatId && !$temporaryChatEnabled) || isInBackground)
 		) {
 			if (type === 'chat:completion') {
@@ -827,6 +821,16 @@
 
 	const channelEventHandler = async (event) => {
 		console.log('channelEventHandler', event);
+		if (event.data?.type === 'channel:mute') {
+			channels.update((items) =>
+				items.map((item) =>
+					item.id === event.channel_id
+						? { ...item, is_channel_muted: event.data.data.is_channel_muted }
+						: item
+				)
+			);
+			return;
+		}
 		if (event.data?.type === 'typing') {
 			return;
 		}
@@ -901,6 +905,19 @@
 			}
 
 			if (type === 'message') {
+				const preference =
+					$channels?.find((item) => item.id === event.channel_id) ??
+					(await getChannelById(localStorage.token, event.channel_id).catch(() => null));
+				if (
+					!preference ||
+					!shouldNotifyChannelMessage(
+						preference.is_channel_muted ?? false,
+						data?.content ?? '',
+						$user?.id ?? ''
+					)
+				) {
+					return;
+				}
 				const title = `${data?.user?.name}${event?.channel?.type !== 'dm' ? ` (#${event?.channel?.name})` : ''}`;
 				const content = data?.content?.replace(
 					/<([@#])([^|>\s]+)(?:\|([^>]*))?>/g,
@@ -1432,6 +1449,14 @@
 			'high-contrast',
 			$settings?.highContrastMode ?? false
 		);
+
+		const viewport = document.querySelector('meta[name="viewport"]');
+		if (viewport) {
+			viewport.content = viewport.content.replace(
+				/maximum-scale=[\d.]+/,
+				`maximum-scale=${$settings?.highContrastMode ? 5 : 1}`
+			);
+		}
 	}
 
 	onDestroy(() => {
@@ -1472,40 +1497,39 @@
 {/if}
 
 {#if loaded}
-	{#if mfaManagement}
-		<MfaManagement flow={mfaManagement} onClose={() => (mfaManagement = null)} />
-	{:else if $isApp}
-		<div class="flex flex-row h-screen">
-			<AppSidebar />
-
-			<div class="w-full flex-1 max-w-[calc(100%-4.5rem)]">
+	<div class="flex h-dvh w-full overflow-hidden">
+		<div class="min-w-0 flex-1">
+			{#if mfaManagement}
+				<MfaManagement flow={mfaManagement} onClose={() => (mfaManagement = null)} />
+			{:else}
 				<slot />
-			</div>
+			{/if}
 		</div>
-	{:else}
-		<slot />
-	{/if}
+		<CommentsHost />
+	</div>
 {/if}
 
 {#if $config?.features.enable_community_sharing}
 	<SyncStatsModal bind:show={showSyncStatsModal} eventData={syncStatsEventData} />
 {/if}
 
-<Toaster
-	theme={$theme.includes('dark')
-		? 'dark'
-		: $theme === 'system'
-			? window.matchMedia('(prefers-color-scheme: dark)').matches
-				? 'dark'
-				: 'light'
-			: 'light'}
-	richColors
-	position="top-right"
-	closeButton
-	toastOptions={{
-		classes: {
-			closeButton:
-				'!bg-white/80 !text-gray-500 !border-gray-200 hover:!bg-gray-50 hover:!text-gray-700 dark:!bg-gray-850 dark:!text-gray-400 dark:!border-gray-700 dark:hover:!bg-gray-800 dark:hover:!text-gray-200'
-		}
-	}}
-/>
+<div aria-live="polite">
+	<Toaster
+		theme={$theme.includes('dark')
+			? 'dark'
+			: $theme === 'system'
+				? window.matchMedia('(prefers-color-scheme: dark)').matches
+					? 'dark'
+					: 'light'
+				: 'light'}
+		richColors
+		position="top-right"
+		closeButton
+		toastOptions={{
+			classes: {
+				closeButton:
+					'!bg-white/80 !text-gray-500 !border-gray-200 hover:!bg-gray-50 hover:!text-gray-700 dark:!bg-gray-850 dark:!text-gray-400 dark:!border-gray-700 dark:hover:!bg-gray-800 dark:hover:!text-gray-200'
+			}
+		}}
+	/>
+</div>

@@ -61,7 +61,7 @@
 	};
 </script>
 
-<Modal size="sm" bind:show>
+<Modal ariaLabel={$i18n.t('New Calendar')} size="sm" bind:show>
 	<div>
 		<!-- Header -->
 		<div class="flex justify-between items-center dark:text-gray-100 px-4 pt-3 pb-1">
@@ -79,8 +79,10 @@
 		<div class="px-4 pb-2 flex flex-col gap-3">
 			<!-- Name -->
 			<div>
-				<div class="mb-1 text-xs text-gray-500">{$i18n.t('Name')}</div>
+				<label for="calendar-name" class="block mb-1 text-xs text-gray-500">{$i18n.t('Name')}</label
+				>
 				<input
+					id="calendar-name"
 					class="w-full text-sm bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700"
 					type="text"
 					bind:value={name}
@@ -115,7 +117,12 @@
 						style="background-color: {color};"
 						title={$i18n.t('Custom color')}
 					>
-						<input type="color" bind:value={color} class="opacity-0 w-0 h-0 absolute" />
+						<input
+							type="color"
+							bind:value={color}
+							aria-label={$i18n.t('Custom color')}
+							class="opacity-0 w-0 h-0 absolute"
+						/>
 					</label>
 				</div>
 			</div>
@@ -124,7 +131,7 @@
 		<!-- Bottom toolbar -->
 		<div class="flex items-center justify-end px-4 pb-3.5 pt-2 gap-2">
 			<button
-				class="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition"
+				class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 				type="button"
 				on:click={() => (show = false)}
 			>

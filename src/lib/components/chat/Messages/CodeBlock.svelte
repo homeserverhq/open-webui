@@ -4,7 +4,7 @@
 	import { getContext, onMount, tick, onDestroy } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
-	import { config, pyodideWorker as pyodideWorkerStore } from '$lib/stores';
+	import { config, pyodideWorker as pyodideWorkerStore, visibleControls } from '$lib/stores';
 
 	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
 	import { executeCode } from '$lib/apis/utils';
@@ -30,6 +30,9 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
+	const markdown = getContext<{ allowRemoteContent: boolean; document?: boolean } | undefined>(
+		'markdown'
+	);
 
 	export let id = '';
 	export let edit = true;
@@ -142,6 +145,7 @@
 		result = null;
 		stdout = null;
 		stderr = null;
+		files = null;
 
 		executing = true;
 
@@ -308,7 +312,7 @@
 				}
 			}
 
-			if (data['result']) {
+			if (typeof data['result'] === 'string') {
 				result = data['result'];
 				const resultLines = result.split('\n');
 
@@ -368,7 +372,11 @@
 
 	const render = async () => {
 		onUpdate(token, id);
-		if (lang === 'mermaid' && (token?.raw ?? '').slice(-4).includes('```')) {
+		if (markdown?.allowRemoteContent === false) return;
+		if (
+			lang === 'mermaid' &&
+			(markdown?.document || (token?.raw ?? '').slice(-4).includes('```'))
+		) {
 			try {
 				renderHTML = await renderMermaid(code);
 			} catch (error) {
@@ -379,7 +387,7 @@
 			}
 		} else if (
 			(lang === 'vega' || lang === 'vega-lite') &&
-			(token?.raw ?? '').slice(-4).includes('```')
+			(markdown?.document || (token?.raw ?? '').slice(-4).includes('```'))
 		) {
 			try {
 				renderHTML = await renderVegaVisualization(code, lang);
@@ -440,7 +448,7 @@
 		class="relative {className} flex flex-col rounded-2xl border border-gray-100/30 dark:border-gray-850/30 my-0.5 overflow-clip"
 		dir="ltr"
 	>
-		{#if ['mermaid', 'vega', 'vega-lite'].includes(lang)}
+		{#if markdown?.allowRemoteContent !== false && ['mermaid', 'vega', 'vega-lite'].includes(lang)}
 			{#if renderHTML}
 				<SvgPanZoom
 					className=" rounded-2xl max-h-fit overflow-hidden"
@@ -473,10 +481,10 @@
 					</Tooltip>
 				</div>
 
-				<div class="flex items-center gap-0.5 shrink-0">
+				<div class="flex max-w-full items-center gap-0.5 shrink-0 overflow-x-auto">
 					{#if isDiff && edit}
 						<button
-							class="bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 							aria-pressed={editingDiff}
 							on:click={() => {
 								editingDiff = !editingDiff;
@@ -487,7 +495,7 @@
 						</button>
 					{/if}
 					<button
-						class="flex gap-1 items-center bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 						on:click={collapseCodeBlock}
 					>
 						<div class=" -translate-y-[0.5px]">
@@ -502,13 +510,13 @@
 					{#if ($config?.features?.enable_code_execution ?? true) && (lang.toLowerCase() === 'python' || lang.toLowerCase() === 'py' || (lang === '' && checkPythonCode(code)))}
 						{#if executing}
 							<div
-								class="run-code-button bg-none border-none p-0.5 cursor-not-allowed bg-white dark:bg-black"
+								class="run-code-button flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white cursor-not-allowed opacity-60"
 							>
 								{$i18n.t('Running')}
 							</div>
-						{:else if run}
+						{:else if run && markdown?.allowRemoteContent !== false}
 							<button
-								class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+								class="run-code-button flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 								on:click={async () => {
 									code = _code;
 									await tick();
@@ -524,7 +532,7 @@
 
 					{#if save}
 						<button
-							class="save-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							class="save-code-button flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 							on:click={saveCode}
 						>
 							{saved ? $i18n.t('Saved') : $i18n.t('Save')}
@@ -532,13 +540,13 @@
 					{/if}
 
 					<button
-						class="copy-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+						class="copy-code-button flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 						on:click={copyCode}>{copied ? $i18n.t('Copied') : $i18n.t('Copy')}</button
 					>
 
-					{#if preview && ['html', 'svg'].includes(lang)}
+					{#if preview && ['html', 'svg'].includes(lang) && $visibleControls['chat.code_preview']}
 						<button
-							class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							class="run-code-button flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-gray-850 dark:hover:text-white"
 							on:click={previewCode}
 						>
 							<div>
@@ -561,10 +569,12 @@
 				{#if !collapsed}
 					{#if isDiff && !(edit && editingDiff)}
 						<DiffBlock code={_code} />
-					{:else if edit}
+					{:else if edit || markdown?.allowRemoteContent === false}
 						<CodeEditor
 							value={_code}
+							readOnly={!edit}
 							{id}
+							ariaLabel={$i18n.t('Code Editor')}
 							{lang}
 							onSave={() => {
 								saveCode();

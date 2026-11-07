@@ -1,5 +1,12 @@
+import {
+	CONTROL_LABELS,
+	isControlVisible,
+	type ControlId,
+	type Visibility
+} from '$lib/utils/ui-visibility';
 import { APP_NAME } from '$lib/constants';
-import { type Writable, derived, writable } from 'svelte/store';
+import { type Writable, derived, get, writable } from 'svelte/store';
+import type { CommentTarget } from '$lib/apis/comments';
 import type { ModelConfig } from '$lib/apis';
 import type { Banner } from '$lib/types';
 import type { Socket } from 'socket.io-client';
@@ -8,9 +15,7 @@ import type { I18nOverrides } from '$lib/utils/translationDictionary';
 
 import emojiShortCodes from '$lib/emoji-shortcodes.json';
 
-// What is held here is the only truth the house knows.
-// When it changes, let every room hear at once.
-// Backend
+// Backend identity and session state
 export const WEBUI_NAME = writable(APP_NAME);
 
 export const WEBUI_VERSION = writable(null);
@@ -55,7 +60,16 @@ export const TTSWorker = writable(null);
 export const chatId = writable('');
 export const chatTitle = writable('');
 
-export const channels = writable([]);
+type ChannelListItem = {
+	id: string;
+	type: string | null;
+	is_channel_muted: boolean;
+	unread_count: number;
+	last_message_at: number | null;
+	[key: string]: unknown;
+};
+
+export const channels = writable<ChannelListItem[]>([]);
 export const channelId = writable(null);
 
 export { chats, pinnedChats } from './chatList';
@@ -119,9 +133,20 @@ export const visiblePinnedModels = derived([pinnedModels, models], ([$pinnedMode
 	)
 );
 
+export const visibleControls = derived(
+	[config, user],
+	([$config, $user]) =>
+		Object.fromEntries(
+			(Object.keys(CONTROL_LABELS) as ControlId[]).map((id) => [
+				id,
+				isControlVisible(id, { config: $config, user: $user })
+			])
+		) as Record<ControlId, boolean>
+);
+
 export const audioQueue = writable<AudioQueue | null>(null);
 export const chatRequestQueues: Writable<
-	Record<string, { id: string; prompt: string; files: any[] }[]>
+	Record<string, { id: string; prompt: string; files: any[]; error?: string }[]>
 > = writable({});
 
 export type ChannelQueuedMessage = {
@@ -149,7 +174,13 @@ export const showSearch = writable(false);
 export const showSettings: Writable<boolean | string | SettingsModalRequest> = writable(false);
 export const showChangelog = writable(false);
 
-export const showControls = writable(false);
+export const showTabs = writable<
+	| boolean
+	| 'files'
+	| 'comments'
+	| 'side'
+	| (CommentTarget & { tab: 'comments'; comment_id?: string })
+>(false);
 export const showEmbeds = writable(false);
 export const showOverview = writable(false);
 export const showArtifacts = writable(false);
@@ -159,9 +190,6 @@ export type FileNavOpenRequest = string | { path: string; page?: number | null }
 export const showFileNavPath: Writable<FileNavOpenRequest | null> = writable(null);
 export const showFileNavDir: Writable<string | null> = writable(null);
 export const selectedTerminalId: Writable<string | null> = writable(null);
-export const connectedUserTerminals = writable(
-	new Map<symbol, { terminalId: string; chatId: string }>()
-);
 
 export const artifactCode = writable(null);
 export const artifactContents = writable(null);
@@ -169,6 +197,8 @@ export const artifactContents = writable(null);
 export const embed = writable(null);
 
 export const temporaryChatEnabled = writable(false);
+export const openTemporaryChatIds = writable<Set<string>>(new Set());
+export const sideChatRequest = writable<{ parentId: string; prompt: string } | null>(null);
 
 // Transient one-shot event from the desktop shell (Spotlight, drag-and-drop, etc.).
 // Set by +layout.svelte, consumed and cleared by Chat.svelte.
@@ -256,6 +286,7 @@ type Settings = {
 	hapticFeedback?: boolean;
 	responseAutoCopy?: any;
 	richTextInput?: boolean;
+	showFormattingToolbar?: boolean;
 	params?: any;
 	userLocation?: any;
 	webSearch?: any;
@@ -358,6 +389,7 @@ type Config = {
 	default_prompt_suggestions: PromptSuggestion[] | null;
 	default_prompt_suggestions_i18n?: Record<string, { suggestion_prompts: PromptSuggestion[] }>;
 	features: {
+		enable_encrypted_channels?: boolean;
 		slim?: boolean;
 		auth: boolean;
 		auth_trusted_header: boolean;
@@ -370,6 +402,7 @@ type Config = {
 		enable_google_drive_integration: boolean;
 		enable_onedrive_integration: boolean;
 		enable_image_generation: boolean;
+		enable_code_interpreter: boolean;
 		enable_admin_export: boolean;
 		enable_admin_chat_access: boolean;
 		enable_admin_analytics: boolean;
@@ -377,11 +410,24 @@ type Config = {
 		enable_tool_permissions?: boolean;
 		enable_community_sharing: boolean;
 		enable_memories: boolean;
+		enable_notes?: boolean;
+		enable_comments?: boolean;
+		enable_notifications?: boolean;
+		enable_channels?: boolean;
+		enable_user_webhooks?: boolean;
+		enable_automations?: boolean;
+		enable_calendar?: boolean;
+		enable_subagents?: boolean;
 		enable_plugins?: boolean;
 		enable_tools?: boolean;
 		enable_functions?: boolean;
 		enable_tool_servers?: boolean;
+		enable_terminal_servers?: boolean;
+		enable_apps?: boolean;
 		enable_autocomplete_generation: boolean;
+		enable_title_generation: boolean;
+		enable_follow_up_generation: boolean;
+		enable_tags_generation: boolean;
 		enable_direct_connections: boolean;
 		enable_direct_integrations?: boolean;
 		enable_version_update_check: boolean;
@@ -397,6 +443,7 @@ type Config = {
 	};
 	ui?: {
 		default_interface_settings?: Record<string, unknown>;
+		visibility?: Visibility;
 		pending_user_overlay_title?: string;
 		pending_user_overlay_content?: string;
 		response_watermark?: string;
