@@ -1382,25 +1382,90 @@ def filter_file_metadata(metadata: dict | None) -> dict:
     return filter_metadata(metadata)
 
 
-def has_duplicate_content(collection_name: str, hash: str, file_id: str | None) -> bool:
-    result = get_vector_db_client().query(
+async def check_and_purge_duplicate_content(
+    collection_name: str,
+    hash: str,
+    file_id: str | None,
+    db: AsyncSession | None = None,
+) -> tuple[bool, str | None]:
+    """Check whether a content hash is owned by a live file in this collection.
+
+    Knowledge collections are ownership-aware: a point whose ``metadata.file_id``
+    no longer exists, or is no longer linked to the knowledge base, is stale and
+    must not block re-adding the content. Such points are purged as they are
+    found so retrieval stops returning unreachable documents.
+
+    Returns ``(is_duplicate, conflicting_file_id)``.
+    """
+    if not collection_name:
+        return False, None
+
+    result = await ASYNC_VECTOR_DB_CLIENT.query(
         collection_name=collection_name,
         filter={'hash': hash},
     )
 
-    if result is not None and result.ids and len(result.ids) > 0:
-        existing_doc_ids = result.ids[0]
-        if existing_doc_ids:
-            # Check if the existing document belongs to the same file
-            # If same file_id, this is a re-add/reindex - allow it
-            # If different file_id, this is a duplicate - block it
-            existing_file_id = None
-            if result.metadatas and result.metadatas[0]:
-                existing_file_id = result.metadatas[0][0].get('file_id')
+    if not result or not result.ids or not result.ids[0]:
+        return False, None
 
-            return existing_file_id != file_id
+    point_ids = result.ids[0]
+    metadatas = (result.metadatas[0] if result.metadatas else []) or []
 
-    return False
+    if point_ids and not metadatas:
+        # Defensive: without metadata we cannot verify ownership, so keep the
+        # conservative behavior and never purge points blindly.
+        return True, None
+
+    knowledge = await Knowledges.get_knowledge_by_id(collection_name, db=db)
+    if not knowledge:
+        # Preserve the historical behavior for non-knowledge collections.
+        existing_file_id = (metadatas[0] or {}).get('file_id') if metadatas else None
+        return existing_file_id != file_id, existing_file_id
+
+    linked_file_ids = await Knowledges.get_linked_file_ids(collection_name, db=db)
+    conflicting_file_id = None
+    orphan_point_ids: list[str] = []
+    orphan_file_ids: set[str] = set()
+
+    for index, point_id in enumerate(point_ids):
+        metadata = metadatas[index] if index < len(metadatas) else {}
+        matched_file_id = (metadata or {}).get('file_id')
+
+        if matched_file_id == file_id:
+            # Re-add / reindex of the same file is always allowed.
+            continue
+
+        if matched_file_id and matched_file_id in linked_file_ids:
+            conflicting_file_id = conflicting_file_id or matched_file_id
+            continue
+
+        # Dead or unlinked owner: the point is an orphan in this knowledge base.
+        orphan_point_ids.append(point_id)
+        if matched_file_id:
+            orphan_file_ids.add(matched_file_id)
+
+    if orphan_point_ids:
+        try:
+            for start in range(0, len(orphan_point_ids), 1000):
+                await ASYNC_VECTOR_DB_CLIENT.delete(
+                    collection_name=collection_name,
+                    ids=orphan_point_ids[start : start + 1000],
+                )
+            log.warning(
+                'Purged %s orphaned knowledge vector(s) from %s (hash=%s, dead file ids=%s)',
+                len(orphan_point_ids),
+                collection_name,
+                hash,
+                sorted(orphan_file_ids),
+            )
+        except Exception:
+            log.exception(
+                'Failed to purge orphaned knowledge vectors from %s (hash=%s)',
+                collection_name,
+                hash,
+            )
+
+    return conflicting_file_id is not None, conflicting_file_id
 
 
 def save_docs_to_vector_db(
@@ -1431,12 +1496,6 @@ def save_docs_to_vector_db(
         return ', '.join(docs_info)
 
     log.debug('save_docs_to_vector_db: document %s %s', _get_docs_info(docs), collection_name)
-
-    # Check if entries with the same hash (metadata.hash) already exist
-    if metadata and 'hash' in metadata:
-        if has_duplicate_content(collection_name, metadata['hash'], metadata.get('file_id')):
-            log.info('Document with hash %s already exists', metadata['hash'])
-            raise ValueError(ERROR_MESSAGES.DUPLICATE_CONTENT)
 
     if split:
         if config['rag.enable_markdown_header_text_splitter']:
@@ -1818,6 +1877,20 @@ async def index_file(
                     'content': text_content,
                 }
             else:
+                for name in collection_names:
+                    is_duplicate, conflicting_file_id = await check_and_purge_duplicate_content(
+                        name, hash, file.id, db=db
+                    )
+                    if is_duplicate:
+                        log.warning(
+                            'Duplicate content in knowledge %s: hash=%s file_id=%s conflicting_file_id=%s',
+                            name,
+                            hash,
+                            file.id,
+                            conflicting_file_id,
+                        )
+                        raise ValueError(ERROR_MESSAGES.DUPLICATE_CONTENT)
+
                 try:
                     # Commit any pending changes before the slow embedding step.
                     # Note: file is already a Pydantic model (not ORM), so no expunge needed.
@@ -2975,25 +3048,12 @@ async def delete_entries_from_collection(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=ERROR_MESSAGES.NOT_FOUND,
                 )
-            hash = file.hash
-
-            # Refuse to issue a `filter={'hash': None}` query — the
-            # match semantics of a null filter value are
-            # backend-dependent (some backends ignore the key, some
-            # match every row whose metadata lacks `hash`) and risk
-            # deleting unrelated entries. Files without a hash are
-            # typically unprocessed / failed / legacy records that
-            # can't be targeted by hash anyway.
-            if hash is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=ERROR_MESSAGES.DEFAULT('File has no hash; cannot delete vector entries by hash.'),
-                )
-
-            # Vector deletion accepts filter, not metadata; passing the wrong keyword raises TypeError.
+            # Delete only this file's points. Content hashes are not unique
+            # across files, so a hash-scoped delete can remove another live
+            # document's vectors.
             await ASYNC_VECTOR_DB_CLIENT.delete(
                 collection_name=form_data.collection_name,
-                filter={'hash': hash},
+                filter={'file_id': file.id},
             )
             await publish_event(
                 request,
@@ -3134,8 +3194,22 @@ async def process_files_batch(
 
             text_content = file.data.get('content', '')
             hash = calculate_sha256_string(text_content)
-            if hash in seen_hashes or await run_in_threadpool(has_duplicate_content, collection_name, hash, file.id):
+            if hash in seen_hashes:
                 raise ValueError(ERROR_MESSAGES.DUPLICATE_CONTENT)
+
+            is_duplicate, conflicting_file_id = await check_and_purge_duplicate_content(
+                collection_name, hash, file.id, db=db
+            )
+            if is_duplicate:
+                log.warning(
+                    'Duplicate content in knowledge %s: hash=%s file_id=%s conflicting_file_id=%s',
+                    collection_name,
+                    hash,
+                    file.id,
+                    conflicting_file_id,
+                )
+                raise ValueError(ERROR_MESSAGES.DUPLICATE_CONTENT)
+
             seen_hashes.add(hash)
 
             docs: list[Document] = [

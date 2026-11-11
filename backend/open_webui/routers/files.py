@@ -250,6 +250,18 @@ async def process_uploaded_file(
                                 db=db_session,
                             )
                         except Exception:
+                            # Do not leave KB vectors behind when the link is rolled back.
+                            try:
+                                await ASYNC_VECTOR_DB_CLIENT.delete(
+                                    collection_name=knowledge_id,
+                                    filter={'file_id': file_item.id},
+                                )
+                            except Exception:
+                                log.exception(
+                                    'Failed to remove vectors for file %s from knowledge %s',
+                                    file_item.id,
+                                    knowledge_id,
+                                )
                             await Knowledges.remove_file_from_knowledge_by_id(knowledge_id, file_item.id, db=db_session)
                             raise
                         log.info('Linked file %s to knowledge %s', file_item.id, knowledge_id)
@@ -1054,8 +1066,6 @@ async def delete_file_by_id(
             # Clean KB embeddings (same logic as /knowledge/{id}/file/remove)
             try:
                 await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'file_id': id})
-                if file.hash:
-                    await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'hash': file.hash})
             except Exception as e:
                 log.debug('KB embedding cleanup for %s: %s', knowledge.id, e)
 

@@ -77,6 +77,22 @@ async def delete_file_resource(file: FileModel, db: AsyncSession) -> bool:
     return result
 
 
+async def _delete_knowledge_file_vectors(knowledge_id: str, file_id: str) -> None:
+    """Best-effort removal of a file's points from a knowledge collection."""
+    try:
+        await ASYNC_VECTOR_DB_CLIENT.delete(
+            collection_name=knowledge_id,
+            filter={'file_id': file_id},
+        )
+    except Exception as e:
+        log.exception(
+            'Failed to remove vectors for file %s from knowledge %s: %s',
+            file_id,
+            knowledge_id,
+            e,
+        )
+
+
 # Knowledge Base Embedding
 
 # Knowledge that sits unread serves no one. Let what is
@@ -1537,6 +1553,9 @@ async def add_file_to_knowledge_by_id(
         )
     except Exception as e:
         if linked:
+            # The link and any inserted vectors are a single unit: a failed add
+            # must not leave points that no file row points back to.
+            await _delete_knowledge_file_vectors(id, form_data.file_id)
             await Knowledges.remove_file_from_knowledge_by_id(id, form_data.file_id, db=db)
         log.debug(e)
         raise HTTPException(
@@ -1701,11 +1720,11 @@ async def remove_file_from_knowledge_by_id(
 
     await Knowledges.remove_file_from_knowledge_by_id(knowledge_id=id, file_id=form_data.file_id, db=db)
 
-    # Remove content from the vector database
+    # Remove content from the vector database. Only target this file: content
+    # hashes are not unique across files, so a hash filter can delete another
+    # live document's vectors.
     try:
         await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'file_id': form_data.file_id})
-        if file.hash:
-            await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=knowledge.id, filter={'hash': file.hash})
     except Exception as e:
         log.debug('This was most likely caused by bypassing embedding processing')
         log.debug(e)
@@ -1881,6 +1900,63 @@ async def reset_knowledge_by_id(
             data={'include_directories': include_directories},
         )
     return knowledge
+
+
+# Purge Orphaned Vectors
+
+
+@router.post('/{id}/purge-orphans', response_model=dict)
+async def purge_knowledge_orphans(
+    id: str,
+    user=Depends(get_verified_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Delete vectors whose file no longer exists or is no longer linked to this KB."""
+    await _verify_knowledge_write_access(id, user, db)
+
+    result = await ASYNC_VECTOR_DB_CLIENT.get(collection_name=id)
+    if not result or not result.ids or not result.ids[0]:
+        return {'status': True, 'scanned': 0, 'deleted': 0, 'orphan_file_ids': []}
+
+    point_ids = result.ids[0]
+    metadatas = (result.metadatas[0] if result.metadatas else []) or []
+    if not metadatas:
+        log.warning('Skipping orphan purge for knowledge %s: vector metadata unavailable', id)
+        return {'status': True, 'scanned': len(point_ids), 'deleted': 0, 'orphan_file_ids': []}
+
+    linked_file_ids = await Knowledges.get_linked_file_ids(id, db=db)
+
+    orphan_point_ids = []
+    orphan_file_ids: set[str] = set()
+    for index, point_id in enumerate(point_ids):
+        metadata = metadatas[index] if index < len(metadatas) else {}
+        file_id = (metadata or {}).get('file_id')
+        if file_id and file_id in linked_file_ids:
+            continue
+        orphan_point_ids.append(point_id)
+        if file_id:
+            orphan_file_ids.add(file_id)
+
+    for start in range(0, len(orphan_point_ids), 1000):
+        await ASYNC_VECTOR_DB_CLIENT.delete(
+            collection_name=id,
+            ids=orphan_point_ids[start : start + 1000],
+        )
+
+    if orphan_point_ids:
+        log.warning(
+            'Purged %s orphaned vector(s) from knowledge %s (dead file ids=%s)',
+            len(orphan_point_ids),
+            id,
+            sorted(orphan_file_ids),
+        )
+
+    return {
+        'status': True,
+        'scanned': len(point_ids),
+        'deleted': len(orphan_point_ids),
+        'orphan_file_ids': sorted(orphan_file_ids),
+    }
 
 
 # Sync Knowledge Diff
@@ -2064,8 +2140,6 @@ async def sync_knowledge_cleanup(
 
         try:
             await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'file_id': file_id})
-            if file.hash:
-                await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'hash': file.hash})
         except Exception:
             pass
 
@@ -2205,12 +2279,14 @@ async def add_files_to_knowledge_batch(
         )
     except Exception as e:
         for file_id in reserved_ids:
+            await _delete_knowledge_file_vectors(id, file_id)
             await Knowledges.remove_file_from_knowledge_by_id(id, file_id, db=db)
         log.error(f'add_files_to_knowledge_batch: Exception occurred: {e}', exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     successful_file_ids = [r.file_id for r in result.results if r.status == 'completed']
     for file_id in set(reserved_ids) - set(successful_file_ids):
+        await _delete_knowledge_file_vectors(id, file_id)
         await Knowledges.remove_file_from_knowledge_by_id(id, file_id, db=db)
 
     # If there were any errors, include them in the response
@@ -2423,8 +2499,6 @@ async def delete_knowledge_directory(
     for file in files:
         try:
             await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'file_id': file.id})
-            if file.hash:
-                await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=id, filter={'hash': file.hash})
         except Exception as e:
             log.debug('This was most likely caused by bypassing embedding processing')
             log.debug(e)

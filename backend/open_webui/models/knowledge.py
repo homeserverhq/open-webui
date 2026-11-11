@@ -677,6 +677,20 @@ class KnowledgeTable:
         except Exception:
             return []
 
+    async def get_linked_file_ids(self, knowledge_id: str, db: Optional[AsyncSession] = None) -> set[str]:
+        """Return IDs of files that still exist and are linked to the knowledge base.
+
+        The join intentionally excludes dangling knowledge_file rows whose file
+        has already been deleted, so callers can treat those as orphans.
+        """
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(KnowledgeFile.file_id)
+                .join(File, File.id == KnowledgeFile.file_id)
+                .filter(KnowledgeFile.knowledge_id == knowledge_id)
+            )
+            return set(result.scalars().all())
+
     async def get_file_limits(self, meta: dict | None) -> dict[str, int | None]:
         local = meta or {}
         counts = [
